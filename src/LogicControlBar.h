@@ -32,8 +32,13 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (skin.panel);
-        g.setColour (skin.windowBg.darker (0.5f));
+        // Logic's control bar is a flat LIGHT grey with dark glyphs + a warm-black LCD.
+        const juce::Colour barBg (0xffa5a5a5), btnBg (0xffaeaeae), glyph (0xff4c4c4c);
+        const juce::Colour playLit (0xff7ec46f), cycleLit (0xff9f8138), rec (0xffb82d1e);
+        const juce::Colour lcdBg (0xff2b2a22), lcdText (0xffece7c9), lcdLabel (0xff8c8770);
+
+        g.fillAll (barBg);
+        g.setColour (juce::Colour (0xff000000));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
 
         const bool playing = isPlaying && isPlaying();
@@ -42,16 +47,16 @@ public:
         for (int i = 0; i < 5; ++i)
         {
             auto b = btn[i].toFloat();
-            const bool lit  = (i == 2 && playing) || (i == 4 && cyc);
-            const juce::Colour base = lit ? (i == 4 ? skin.accent : juce::Colour (0xff4ad07a)) : skin.control;
-            g.setGradientFill (juce::ColourGradient (base.brighter (0.12f), b.getX(), b.getY(),
-                                                     base.darker (0.16f),  b.getX(), b.getBottom(), false));
+            const bool lit = (i == 2 && playing) || (i == 4 && cyc);
+            const juce::Colour base = (i == 2 && playing) ? playLit : (i == 4 && cyc) ? cycleLit : btnBg;
+            g.setGradientFill (juce::ColourGradient (base.brighter (0.06f), b.getX(), b.getY(),
+                                                     base.darker (0.10f),  b.getX(), b.getBottom(), false));
             g.fillRoundedRectangle (b, 5.0f);
-            g.setColour (skin.windowBg.darker (0.3f));
+            g.setColour (juce::Colours::black.withAlpha (0.28f));
             g.drawRoundedRectangle (b, 5.0f, 1.0f);
 
             auto c = b.reduced (b.getWidth() * 0.30f);
-            g.setColour (lit ? juce::Colours::white : skin.text);
+            g.setColour ((i == 3) ? rec : (lit ? juce::Colours::white : glyph));
             juce::Path p;
             switch (i)
             {
@@ -64,8 +69,8 @@ public:
                 case 2:  // play
                     p.addTriangle (c.getX(), c.getY(), c.getX(), c.getBottom(), c.getRight(), c.getCentreY());
                     g.fillPath (p); break;
-                case 3:  // record
-                    g.setColour (juce::Colour (0xffe2555c)); g.fillEllipse (c); break;
+                case 3:  // record (red circle)
+                    g.fillEllipse (c); break;
                 case 4:  // cycle
                     g.drawEllipse (c.reduced (0.5f), 1.6f);
                     p.addTriangle (c.getRight() - 2.0f, c.getY() - 1.5f, c.getRight() + 3.5f, c.getY() + 2.0f, c.getRight() - 2.0f, c.getY() + 4.5f);
@@ -73,21 +78,20 @@ public:
             }
         }
 
-        // LCD display
         auto l = lcd.toFloat();
-        g.setColour (skin.timecodeBg);
+        g.setColour (lcdBg);
         g.fillRoundedRectangle (l, 5.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.setColour (juce::Colours::black);
         g.drawRoundedRectangle (l, 5.0f, 1.0f);
-        g.setColour (skin.muted);
+        g.setColour (lcdLabel);
         g.setFont (juce::Font (juce::FontOptions().withHeight (8.5f)));
         g.drawText ("TIME", l.reduced (9.0f, 4.0f).removeFromTop (9.0f), juce::Justification::topLeft, false);
-        g.setColour (skin.timecodeText);
+        g.setColour (lcdText);
         g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 19.0f, juce::Font::bold)));
         g.drawText (lcdMain, l.reduced (9.0f, 2.0f), juce::Justification::centredRight, false);
         if (lcdSub.isNotEmpty())
         {
-            g.setColour (skin.muted);
+            g.setColour (lcdLabel);
             g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
             g.drawText (lcdSub, l.reduced (9.0f, 4.0f), juce::Justification::bottomLeft, false);
         }

@@ -267,16 +267,23 @@ void TimelineComponent::paint (juce::Graphics& g)
                 const bool sel = (row.group == selGroup && row.track == selTrack && j == selClip);
                 const float rad = skin.flatClips ? 2.5f : 4.0f;
 
-                if (sel)   // soft selection glow
+                // selected regions get the skin's selection fill/outline (Logic: blue body + yellow border);
+                // unselected stay the neutral region colour with a contrasting waveform.
+                const juce::Colour fillCol    = sel ? (skin.clipSelFill.isTransparent() ? base : skin.clipSelFill) : base;
+                const juce::Colour outlineCol = sel ? skin.clipSelOutline : fillCol.brighter (0.32f);
+                const juce::Colour waveCol    = sel ? (skin.clipSelFill.isTransparent() ? skin.waveform : juce::Colours::white)
+                                                    : (base.getPerceivedBrightness() > 0.52f ? base.darker (0.62f) : skin.waveform);
+
+                if (sel && skin.clipSelFill.isTransparent())   // soft glow for skins without a hard selection colour
                 {
                     g.setColour (skin.accent.withAlpha (0.45f));
                     g.drawRoundedRectangle (r.expanded (2.0f), rad + 1.5f, 2.0f);
                 }
-                if (skin.flatClips) { g.setColour (base); g.fillRoundedRectangle (r, rad); }
+                if (skin.flatClips) { g.setColour (fillCol); g.fillRoundedRectangle (r, rad); }
                 else
                 {
-                    g.setGradientFill (juce::ColourGradient (base.brighter (0.10f), r.getX(), r.getY(),
-                                                             base.darker (0.20f),  r.getX(), r.getBottom(), false));
+                    g.setGradientFill (juce::ColourGradient (fillCol.brighter (0.10f), r.getX(), r.getY(),
+                                                             fillCol.darker (0.20f),  r.getX(), r.getBottom(), false));
                     g.fillRoundedRectangle (r, rad);
                 }
 
@@ -286,9 +293,9 @@ void TimelineComponent::paint (juce::Graphics& g)
                 if (titled)
                 {
                     auto bar = r.withHeight (13.0f);
-                    g.setColour (base.darker (0.45f).withAlpha (0.92f));
+                    g.setColour (fillCol.darker (0.45f).withAlpha (0.92f));
                     g.fillRect (bar.withTrimmedTop (1.0f).reduced (1.0f, 0.0f));
-                    g.setColour (juce::Colours::white.withAlpha (0.92f));
+                    g.setColour ((sel ? juce::Colours::white : skin.waveform).withAlpha (0.95f));
                     g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f)));
                     g.drawText (t->name, bar.toNearestInt().reduced (5, 0), juce::Justification::centredLeft, true);
                     waveArea = r.withTrimmedTop (13.0f).reduced (3.0f, 2.0f);
@@ -296,12 +303,11 @@ void TimelineComponent::paint (juce::Graphics& g)
 
                 if (t->thumb != nullptr && t->thumb->getTotalLength() > 0.0)
                 {
-                    const juce::Colour wave = base.getPerceivedBrightness() > 0.52f ? base.darker (0.62f) : skin.waveform;
-                    g.setColour (wave);
+                    g.setColour (waveCol);
                     t->thumb->drawChannels (g, waveArea.toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
 
-                g.setColour (sel ? juce::Colours::white : base.brighter (0.32f));
+                g.setColour (outlineCol);
                 g.drawRoundedRectangle (r, rad, sel ? 2.0f : 1.0f);
 
                 if (! titled && r.getWidth() > 52.0f)            // fallback name overlay for narrow clips
@@ -360,7 +366,7 @@ void TimelineComponent::paint (juce::Graphics& g)
         const int px = (int) xForTime (playhead);
         if (px >= headerW)
         {
-            g.setColour (juce::Colour (0xffff5a3c));
+            g.setColour (skin.playhead);
             g.drawVerticalLine (px, 0.0f, (float) h);
             juce::Path tri;
             tri.addTriangle ((float) px - 6.0f, 0.0f, (float) px + 6.0f, 0.0f, (float) px, 9.0f);

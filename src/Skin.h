@@ -18,6 +18,9 @@ struct Skin
     int       clipPalette = 0;       // region colours: 0 uniform(audioClip), 1 Pro Tools pastels, 2 Ableton brights
     bool      clipTitleBar = false;  // draw a region name strip atop each clip (DAW regions)
     bool      tintLanes = false;     // tint the whole lane with the track colour (Pro Tools)
+    juce::Colour clipSelFill;                              // selected-region fill (transparent => brighten base)
+    juce::Colour clipSelOutline = juce::Colours::white;    // selected-region outline
+    juce::Colour playhead = juce::Colour (0xffff5a3c);     // playhead line colour
     juce::String name;
 
     enum Daw { Layback = 0, Logic, ProTools, Ableton };
@@ -42,18 +45,19 @@ struct Skin
         Skin s;
         switch (d)
         {
-            case Logic:   // charcoal greys, blue accent, soft gradients
+            case Logic:   // 1:1 spec: light-grey chrome, #575757 surfaces, cool #2D2A35 lanes
                 s.name = "Logic Pro";
-                s.windowBg = juce::Colour (0xff232325); s.panel = juce::Colour (0xff2c2c2e); s.control = juce::Colour (0xff3a3a3c);
-                s.accent = juce::Colour (0xff3f7fd6); s.text = juce::Colour (0xffe8e8ea); s.muted = juce::Colour (0xff9a9a9e);
-                s.ruler = juce::Colour (0xff343436); s.headerTop = juce::Colour (0xff363638); s.headerBottom = juce::Colour (0xff2a2a2c);
-                s.activeRow = juce::Colour (0xff39465c); s.activeStrip = juce::Colour (0xff5b9be8);
-                s.rowEven = juce::Colour (0xff2a2a2c); s.rowOdd = juce::Colour (0xff2e2e30);
-                s.videoClip = juce::Colour (0xff6b7280); s.videoStrip = juce::Colour (0xff8a93a0);
-                s.audioClip = juce::Colour (0xff3f7fd6); s.audioStrip = juce::Colour (0xff58a06a);
-                s.waveform = juce::Colour (0xffd6e6ff); s.timecodeText = juce::Colour (0xffe8e8ea); s.timecodeBg = juce::Colour (0xff1b1b1d);
-                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.5f; s.layout = 1;
-                s.clipTitleBar = true; break;   // metallic + top control bar, named regions
+                s.windowBg = juce::Colour (0xff2d2a35); s.panel = juce::Colour (0xff575757); s.control = juce::Colour (0xff6a6a6a);
+                s.accent = juce::Colour (0xff4f86d8); s.text = juce::Colour (0xfff2f2f2); s.muted = juce::Colour (0xffa8a8a8);
+                s.ruler = juce::Colour (0xff3b3b3b); s.headerTop = juce::Colour (0xff5e5e5e); s.headerBottom = juce::Colour (0xff525252);
+                s.activeRow = juce::Colour (0xff34313b); s.activeStrip = juce::Colour (0xff4f86d8);
+                s.rowEven = juce::Colour (0xff575757); s.rowOdd = juce::Colour (0xff525252);
+                s.videoClip = juce::Colour (0xff48474b); s.videoStrip = juce::Colour (0xff616161);
+                s.audioClip = juce::Colour (0xff48474b); s.audioStrip = juce::Colour (0xff616161);
+                s.waveform = juce::Colour (0xff92befa); s.timecodeText = juce::Colour (0xffece7c9); s.timecodeBg = juce::Colour (0xff2b2a22);
+                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.0f; s.layout = 1;
+                s.clipTitleBar = true; s.clipSelFill = juce::Colour (0xff476ea6); s.clipSelOutline = juce::Colour (0xfff7d648);
+                s.playhead = juce::Colour (0xfffbec98); break;
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms
                 s.name = "Pro Tools";
