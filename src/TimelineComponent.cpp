@@ -28,7 +28,7 @@ void TimelineComponent::setPlayhead (double seconds)
 
 void TimelineComponent::setLoop (bool enabled, double start, double end) { loopEnabled = enabled; loopStart = start; loopEnd = end; repaint(); }
 void TimelineComponent::setSnapEnabled (bool b) { snapEnabled = b; }
-void TimelineComponent::setSkin (const Skin& s) { skin = s; headerW = s.logicHeaders ? 280 : 184; repaint(); }
+void TimelineComponent::setSkin (const Skin& s) { skin = s; headerW = s.logicHeaders ? 300 : 184; repaint(); }
 
 //==============================================================================
 int TimelineComponent::numGroups() const { return groups != nullptr ? (int) groups->size() : 0; }
@@ -129,12 +129,12 @@ juce::Rectangle<int> TimelineComponent::sBox (int rowYpos) const
 juce::Rectangle<int> TimelineComponent::rBox (int rowYpos) const
 {
     if (! skin.logicHeaders) return {};
-    return { 98, rowYpos + rowHeight - 22, 18, 16 };
+    return { 118, rowYpos + rowHeight - 22, 18, 16 };     // R sits after the Freeze button
 }
 juce::Rectangle<int> TimelineComponent::vBox (int rowYpos) const
 {
     if (! skin.logicHeaders) return {};
-    return { 150, rowYpos + rowHeight - 21, 90, 14 };
+    return { 164, rowYpos + rowHeight - 21, 100, 14 };
 }
 juce::Rectangle<int> TimelineComponent::disclosureRectAt (int rowYpos) const { return { 6, rowYpos + rowHeight / 2 - 8, 16, 16 }; }
 
@@ -308,9 +308,8 @@ void TimelineComponent::paint (juce::Graphics& g)
                 g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
                 g.drawText (juce::String (row.track + 1), 0, row.y, 22, rowHeight, juce::Justification::centred, false);
 
-                juce::Rectangle<float> icon (26.0f, (float) row.y + 7.0f, 26.0f, 26.0f);   // colour icon + waveform glyph
-                g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4f86d8), icon.getX(), icon.getY(),
-                                                         juce::Colour (0xff3162b4), icon.getX(), icon.getBottom(), false));
+                juce::Rectangle<float> icon (26.0f, (float) row.y + 7.0f, 26.0f, 26.0f);   // flat light-blue colour icon
+                g.setColour (juce::Colour (0xff5a9ce0));
                 g.fillRoundedRectangle (icon, 5.0f);
                 g.setColour (juce::Colours::white.withAlpha (0.92f));
                 for (int k = 0; k < 5; ++k)
@@ -327,33 +326,45 @@ void TimelineComponent::paint (juce::Graphics& g)
                 auto lbtn = [&] (juce::Rectangle<int> bx, const char* tx, bool on, juce::Colour col)
                 {
                     auto rf = bx.toFloat();
-                    g.setColour (on ? col : skin.control.darker (0.10f));
-                    g.fillRoundedRectangle (rf, 3.0f);
-                    g.setColour (on ? col.brighter (0.30f) : skin.control.brighter (0.18f));
-                    g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+                    g.setColour (on ? col : skin.control.darker (0.18f));
+                    g.fillRoundedRectangle (rf, 2.5f);
+                    g.setColour (on ? col.brighter (0.30f) : skin.control.brighter (0.10f));
+                    g.drawRoundedRectangle (rf, 2.5f, 1.0f);
                     g.setColour (on ? juce::Colours::white : col);
                     g.setFont (10.5f);
                     g.drawText (tx, bx, juce::Justification::centred, false);
                 };
-                lbtn (mBox (row.y), "M", t->mute,      juce::Colour (0xff4fb0e6));   // mute = cyan (Logic)
-                lbtn (sBox (row.y), "S", t->solo,      juce::Colour (0xffe6c84a));   // solo = yellow
-                lbtn (rBox (row.y), "R", t->recordArm, juce::Colour (0xffc8281a));   // record = red
-                lbtn ({ 118, row.y + rowHeight - 22, 18, 16 }, "I", false, juce::Colour (0xff9aa0a8));   // input (cosmetic)
+                lbtn (mBox (row.y), "M", t->mute, juce::Colour (0xff4fb0e6));        // mute = cyan
+                lbtn (sBox (row.y), "S", t->solo, juce::Colour (0xffe6c84a));        // solo = gold
 
-                auto vb = vBox (row.y);                              // horizontal volume slider
-                g.setColour (juce::Colour (0xff3f3e3e));
-                g.fillRoundedRectangle (vb.toFloat(), 3.0f);
+                {                                                                    // Freeze (snowflake), cosmetic
+                    juce::Rectangle<int> fb { 98, row.y + rowHeight - 22, 18, 16 };
+                    g.setColour (skin.control.darker (0.18f));  g.fillRoundedRectangle (fb.toFloat(), 2.5f);
+                    g.setColour (skin.control.brighter (0.10f)); g.drawRoundedRectangle (fb.toFloat(), 2.5f, 1.0f);
+                    g.setColour (juce::Colour (0xff9aa0a8));
+                    const float fx = (float) fb.getCentreX(), fy = (float) fb.getCentreY();
+                    for (int a = 0; a < 3; ++a)
+                    { const float ang = (float) a * 1.0472f;
+                      g.drawLine (fx - std::cos (ang) * 5.0f, fy - std::sin (ang) * 5.0f, fx + std::cos (ang) * 5.0f, fy + std::sin (ang) * 5.0f, 1.0f); }
+                }
+                lbtn (rBox (row.y), "R", t->recordArm, juce::Colour (0xffc8281a));   // record = red
+                lbtn ({ 138, row.y + rowHeight - 22, 18, 16 }, "I", false, juce::Colour (0xff9aa0a8));   // input (cosmetic)
+
+                auto vb = vBox (row.y);                                              // recessed slider + value fill + cap
+                g.setColour (juce::Colour (0xff2e2d2d)); g.fillRoundedRectangle (vb.toFloat(), 3.0f);
                 const float vn  = juce::jlimit (0.0f, 1.0f, t->volume / 1.4f);
                 const int   thx = vb.getX() + (int) (vn * (float) vb.getWidth());
-                g.setColour (juce::Colour (0xff9f9f9f));
-                g.fillEllipse ((float) thx - 6.0f, (float) vb.getCentreY() - 6.0f, 12.0f, 12.0f);
+                g.setColour (juce::Colour (0xff6f7174));
+                g.fillRoundedRectangle ((float) vb.getX(), (float) vb.getY(), (float) juce::jmax (0, thx - vb.getX()), (float) vb.getHeight(), 3.0f);
+                g.setColour (juce::Colour (0xffc4c6c8));
+                g.fillRoundedRectangle ((float) thx - 4.0f, (float) vb.getY() - 2.0f, 8.0f, (float) vb.getHeight() + 4.0f, 2.0f);
 
-                const float pcx = (float) (headerW - 18), pcy = (float) (row.y + rowHeight - 13), pr = 9.0f;   // pan knob
+                const float pcx = (float) (headerW - 16), pcy = (float) (row.y + rowHeight - 13), pr = 11.0f;   // pan knob
                 g.setColour (juce::Colour (0xff3d3d3d)); g.fillEllipse (pcx - pr, pcy - pr, pr * 2.0f, pr * 2.0f);
                 g.setColour (juce::Colour (0xff6a6a6a)); g.drawEllipse (pcx - pr, pcy - pr, pr * 2.0f, pr * 2.0f, 1.0f);
                 const float pa = juce::jlimit (-1.0f, 1.0f, t->pan) * 2.3f;
-                g.setColour (juce::Colour (0xff9c9e9d));
-                g.drawLine (pcx, pcy, pcx + std::sin (pa) * (pr - 2.0f), pcy - std::cos (pa) * (pr - 2.0f), 1.6f);
+                g.setColour (juce::Colour (0xffc8cacb));
+                g.drawLine (pcx, pcy, pcx + std::sin (pa) * (pr - 3.0f), pcy - std::cos (pa) * (pr - 3.0f), 1.8f);
             }
             else
             {
