@@ -15,6 +15,9 @@
 // audio tracks). One group is "active": its video previews and its audio plays.
 // The audio engine holds every track's audio in RAM; only the active group's
 // tracks carry clips (others are silent), so switching groups is instant.
+static juce::var doublesToVar (const std::vector<double>& v) { juce::var a; for (double d : v) a.append (d); return a; }
+static std::vector<double> varToDoubles (const juce::var& v) { std::vector<double> r; if (auto* arr = v.getArray()) for (auto& e : *arr) r.push_back ((double) e); return r; }
+
 namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight }; }
 enum class KeyProfile { Layback, Logic, ProTools, Ableton };
 
@@ -89,7 +92,11 @@ public:
         keysButton.onClick = [this] { showKeysMenu(); };
         addAndMakeVisible (keysButton);
 
-        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &loopToggle, &snapToggle })
+        projectButton.setButtonText ("Project");
+        projectButton.onClick = [this] { showProjectMenu(); };
+        addAndMakeVisible (projectButton);
+
+        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &loopToggle, &snapToggle })
             c->setWantsKeyboardFocus (false);
 
         commandManager.registerAllCommandsForTarget (this);
@@ -269,6 +276,8 @@ public:
         video.setBounds (r);
 
         openButton.setBounds (controls.removeFromLeft (104));
+        controls.removeFromLeft (8);
+        projectButton.setBounds (controls.removeFromLeft (80));
         controls.removeFromLeft (8);
         playButton.setBounds (controls.removeFromLeft (84));
         controls.removeFromLeft (10);
@@ -802,6 +811,204 @@ private:
     void parentHierarchyChanged() override { if (isShowing()) grabKeyboardFocus(); }
     void restoreKeyFocus() { if (isShowing()) grabKeyboardFocus(); }   // reclaim focus after a menu/dialog so shortcuts keep working
 
+    //==========================================================================
+    // Project save / open. A ".lbproj" bundle = project.json + a media/ folder of copied files.
+    juce::String copyMedia (const juce::File& src, const juce::File& mediaDir)
+    {
+        if (! src.existsAsFile()) return src.getFullPathName();
+        const juce::File dest = mediaDir.getChildFile (src.getFileName());
+        if (! (dest.existsAsFile() && dest.getSize() == src.getSize()))
+            src.copyFileTo (dest);
+        return "media/" + src.getFileName();
+    }
+
+    void saveProject()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Save project",
+                    juce::File ("~/Desktop").getChildFile ("Layback Project.lbproj"), "*.lbproj");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this] (const juce::FileChooser& fc)
+            {
+                restoreKeyFocus();
+                auto dir = fc.getResult();
+                if (dir == juce::File()) return;
+                if (dir.getFileExtension().toLowerCase() != ".lbproj")
+                    dir = dir.getSiblingFile (dir.getFileNameWithoutExtension() + ".lbproj");
+                dir.createDirectory();
+                const juce::File media = dir.getChildFile ("media");
+                media.createDirectory();
+
+                auto* root = new juce::DynamicObject();
+                root->setProperty ("version", 1);
+                root->setProperty ("activeGroup", activeGroup);
+                root->setProperty ("loopEnabled", loopEnabled);
+                root->setProperty ("loopStart", loopStart);
+                root->setProperty ("loopEnd", loopEnd);
+
+                juce::var garr;
+                for (auto& g : groups)
+                {
+                    auto* go = new juce::DynamicObject();
+                    go->setProperty ("name", g->name);
+                    go->setProperty ("video", copyMedia (g->file, media));
+                    go->setProperty ("duration", g->duration);
+                    go->setProperty ("expanded", g->expanded);
+                    go->setProperty ("videoMute", g->videoMute);
+                    go->setProperty ("videoSolo", g->videoSolo);
+                    go->setProperty ("cuts", doublesToVar (g->cutMarkers));
+
+                    juce::var tarr;
+                    for (auto& t : g->tracks)
+                    {
+                        auto* to = new juce::DynamicObject();
+                        to->setProperty ("name", t->name);
+                        to->setProperty ("file", copyMedia (t->file, media));
+                        to->setProperty ("sourceLength", t->sourceLength);
+                        to->setProperty ("mute", t->mute);
+                        to->setProperty ("solo", t->solo);
+                        to->setProperty ("beats", doublesToVar (t->beatMarkers));
+
+                        juce::var carr;
+                        for (auto& c : t->clips)
+                        {
+                            auto* co = new juce::DynamicObject();
+                            co->setProperty ("start", c.timelineStart);
+                            co->setProperty ("in", c.sourceIn);
+                            co->setProperty ("dur", c.duration);
+                            carr.append (juce::var (co));
+                        }
+                        to->setProperty ("clips", carr);
+                        tarr.append (juce::var (to));
+                    }
+                    go->setProperty ("tracks", tarr);
+                    garr.append (juce::var (go));
+                }
+                root->setProperty ("groups", garr);
+
+                dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+                titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
+            });
+    }
+
+    void openProject()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Open project", juce::File ("~/Desktop"), "*.lbproj;*.json");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::canSelectDirectories,
+            [this] (const juce::FileChooser& fc)
+            {
+                restoreKeyFocus();
+                const auto sel = fc.getResult();
+                if (sel == juce::File()) return;
+                const juce::File jf  = sel.isDirectory() ? sel.getChildFile ("project.json") : sel;
+                const juce::File dir = jf.getParentDirectory();
+                if (! jf.existsAsFile()) { titleLabel.setText ("No project.json found.", juce::dontSendNotification); return; }
+                const auto root = juce::JSON::parse (jf.loadFileAsString());
+                if (! root.isObject()) { titleLabel.setText ("Invalid project file.", juce::dontSendNotification); return; }
+                loadProjectFromVar (root, dir);
+            });
+    }
+
+    void newProject()
+    {
+        pauseAll();
+        for (auto& g : groups)
+            for (auto& t : g->tracks)
+            { if (t->thumb) { t->thumb->removeChangeListener (this); t->thumb->setSource (nullptr); } audioEngine.removeTrack (t->engineId); }
+        groups.clear();
+        timeline.setGroups (&groups);
+        activeGroup = -1; selGroup = selTrack = selClip = -1;
+        playhead = 0.0; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
+        loopToggle.setToggleState (false, juce::dontSendNotification);
+        timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
+        titleLabel.setText ("Layback Station", juce::dontSendNotification);
+        resized(); timeline.repaint();
+    }
+
+    void loadProjectFromVar (const juce::var& root, const juce::File& baseDir)
+    {
+        newProject();
+
+        auto resolve = [&] (const juce::String& rel) -> juce::File
+        {
+            if (juce::File::isAbsolutePath (rel)) { juce::File f (rel); if (f.existsAsFile()) return f; }
+            return baseDir.getChildFile (rel);
+        };
+
+        if (auto* garr = root["groups"].getArray())
+            for (auto& gv : *garr)
+            {
+                auto grp = std::make_unique<VideoGroup>();
+                grp->name      = gv["name"].toString();
+                grp->file      = resolve (gv["video"].toString());
+                grp->duration  = (double) gv["duration"];
+                grp->expanded  = (bool)   gv["expanded"];
+                grp->videoMute = (bool)   gv["videoMute"];
+                grp->videoSolo = (bool)   gv["videoSolo"];
+                grp->cutMarkers = varToDoubles (gv["cuts"]);
+
+                if (auto* tarr = gv["tracks"].getArray())
+                    for (auto& tv : *tarr)
+                    {
+                        const juce::File file = resolve (tv["file"].toString());
+                        double len = 0.0;
+                        const int id = audioEngine.addTrack (file, len);
+                        if (id < 0) continue;
+
+                        auto tr = std::make_unique<AudioTrack>();
+                        tr->name         = tv["name"].toString();
+                        tr->file         = file;
+                        tr->engineId     = id;
+                        tr->sourceLength = (double) tv["sourceLength"]; if (tr->sourceLength <= 0.0) tr->sourceLength = len;
+                        tr->mute         = (bool) tv["mute"];
+                        tr->solo         = (bool) tv["solo"];
+                        tr->beatMarkers  = varToDoubles (tv["beats"]);
+                        if (auto* carr = tv["clips"].getArray())
+                            for (auto& cv : *carr)
+                                tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"] });
+
+                        tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
+                        tr->thumb->addChangeListener (this);
+                        tr->thumb->setSource (new juce::FileInputSource (file));
+                        grp->tracks.push_back (std::move (tr));
+                    }
+                groups.push_back (std::move (grp));
+            }
+
+        timeline.setGroups (&groups);
+        loopEnabled = (bool)   root["loopEnabled"];
+        loopStart   = (double) root["loopStart"];
+        loopEnd     = (double) root["loopEnd"];
+        loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
+
+        if (! groups.empty())
+        {
+            const int ag = (int) root["activeGroup"];
+            activeGroup = -1;
+            activateGroup (juce::jlimit (0, (int) groups.size() - 1, ag < 0 ? 0 : ag));
+        }
+        timeline.setLoop (loopEnabled, loopStart, loopEnd);
+        resized(); timeline.repaint();
+        titleLabel.setText ("Opened: " + baseDir.getFileName(), juce::dontSendNotification);
+    }
+
+    void showProjectMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "New project");
+        m.addItem (2, "Open project...");
+        m.addItem (3, "Save project...");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&projectButton),
+            [this] (int r)
+            {
+                if      (r == 1) newProject();
+                else if (r == 2) openProject();
+                else if (r == 3) saveProject();
+                restoreKeyFocus();
+            });
+    }
+
     void changeListenerCallback (juce::ChangeBroadcaster*) override { timeline.repaint(); }
 
     void timerCallback() override
@@ -875,7 +1082,7 @@ private:
     TimelineComponent timeline;
     juce::Viewport timelineViewport;
 
-    juce::TextButton openButton, playButton, exportButton, keysButton;
+    juce::TextButton openButton, playButton, exportButton, keysButton, projectButton;
     juce::ToggleButton loopToggle, snapToggle;
     juce::ApplicationCommandManager commandManager;
     KeyProfile keyProfile = KeyProfile::Layback;
