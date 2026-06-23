@@ -123,18 +123,18 @@ juce::Rectangle<int> TimelineComponent::mBox (int rowYpos) const
 }
 juce::Rectangle<int> TimelineComponent::sBox (int rowYpos) const
 {
-    if (skin.logicHeaders) return { 78, rowYpos + rowHeight - 22, 18, 16 };
+    if (skin.logicHeaders) return { 76, rowYpos + rowHeight - 22, 18, 16 };
     return { headerW - 30, rowYpos + rowHeight / 2 - 9, 22, 18 };
 }
 juce::Rectangle<int> TimelineComponent::rBox (int rowYpos) const
 {
     if (! skin.logicHeaders) return {};
-    return { 118, rowYpos + rowHeight - 22, 18, 16 };     // R sits after the Freeze button
+    return { 112, rowYpos + rowHeight - 22, 18, 16 };     // R = 4th cell (after M S Freeze)
 }
 juce::Rectangle<int> TimelineComponent::vBox (int rowYpos) const
 {
     if (! skin.logicHeaders) return {};
-    return { 164, rowYpos + rowHeight - 21, 100, 14 };
+    return { 156, rowYpos + rowHeight - 21, 108, 14 };
 }
 juce::Rectangle<int> TimelineComponent::disclosureRectAt (int rowYpos) const { return { 6, rowYpos + rowHeight / 2 - 8, 16, 16 }; }
 
@@ -323,32 +323,31 @@ void TimelineComponent::paint (juce::Graphics& g)
                 g.setFont (juce::Font (juce::FontOptions().withHeight (12.5f)));
                 g.drawText (t->name, 58, row.y + 7, headerW - 64, 16, juce::Justification::centredLeft, true);
 
-                auto lbtn = [&] (juce::Rectangle<int> bx, const char* tx, bool on, juce::Colour col)
-                {
-                    auto rf = bx.toFloat();
-                    g.setColour (on ? col : skin.control.darker (0.18f));
-                    g.fillRoundedRectangle (rf, 2.5f);
-                    g.setColour (on ? col.brighter (0.30f) : skin.control.brighter (0.10f));
-                    g.drawRoundedRectangle (rf, 2.5f, 1.0f);
-                    g.setColour (on ? juce::Colours::white : col);
-                    g.setFont (10.5f);
-                    g.drawText (tx, bx, juce::Justification::centred, false);
-                };
-                lbtn (mBox (row.y), "M", t->mute, juce::Colour (0xff4fb0e6));        // mute = cyan
-                lbtn (sBox (row.y), "S", t->solo, juce::Colour (0xffe6c84a));        // solo = gold
+                {                                                                   // butted M S Freeze R I segmented group
+                    juce::Rectangle<int> grp { 58, row.y + rowHeight - 22, 90, 16 };
+                    g.setColour (skin.control.darker (0.22f)); g.fillRoundedRectangle (grp.toFloat(), 3.0f);
+                    g.setColour (skin.windowBg.darker (0.15f)); g.drawRoundedRectangle (grp.toFloat(), 3.0f, 1.0f);
 
-                {                                                                    // Freeze (snowflake), cosmetic
-                    juce::Rectangle<int> fb { 98, row.y + rowHeight - 22, 18, 16 };
-                    g.setColour (skin.control.darker (0.18f));  g.fillRoundedRectangle (fb.toFloat(), 2.5f);
-                    g.setColour (skin.control.brighter (0.10f)); g.drawRoundedRectangle (fb.toFloat(), 2.5f, 1.0f);
-                    g.setColour (juce::Colour (0xff9aa0a8));
-                    const float fx = (float) fb.getCentreX(), fy = (float) fb.getCentreY();
-                    for (int a = 0; a < 3; ++a)
-                    { const float ang = (float) a * 1.0472f;
-                      g.drawLine (fx - std::cos (ang) * 5.0f, fy - std::sin (ang) * 5.0f, fx + std::cos (ang) * 5.0f, fy + std::sin (ang) * 5.0f, 1.0f); }
+                    auto cell = [&] (int idx, bool on, juce::Colour col) -> juce::Rectangle<int>
+                    {
+                        juce::Rectangle<int> b { 58 + idx * 18, row.y + rowHeight - 22, 18, 16 };
+                        if (on) { g.setColour (col); g.fillRect (b.reduced (1)); }
+                        if (idx > 0) { g.setColour (skin.windowBg.darker (0.1f)); g.fillRect (b.getX(), b.getY() + 2, 1, 12); }
+                        return b;
+                    };
+                    auto lab = [&] (juce::Rectangle<int> b, const char* tx, bool on, juce::Colour col)
+                    { g.setColour (on ? juce::Colours::white : col); g.setFont (10.5f); g.drawText (tx, b, juce::Justification::centred, false); };
+
+                    lab (cell (0, t->mute, juce::Colour (0xff4fb0e6)), "M", t->mute, juce::Colour (0xff4fb0e6));        // mute cyan
+                    lab (cell (1, t->solo, juce::Colour (0xffe6c84a)), "S", t->solo, juce::Colour (0xffe6c84a));        // solo gold
+                    { auto fb = cell (2, false, {});                                                                    // freeze snowflake
+                      g.setColour (juce::Colour (0xff9aa0a8));
+                      const float fx = (float) fb.getCentreX(), fy = (float) fb.getCentreY();
+                      for (int a = 0; a < 3; ++a) { const float ang = (float) a * 1.0472f;
+                        g.drawLine (fx - std::cos (ang) * 4.5f, fy - std::sin (ang) * 4.5f, fx + std::cos (ang) * 4.5f, fy + std::sin (ang) * 4.5f, 1.0f); } }
+                    lab (cell (3, t->recordArm, juce::Colour (0xffc8281a)), "R", t->recordArm, juce::Colour (0xffc8281a));  // record red
+                    lab (cell (4, false, {}), "I", false, juce::Colour (0xff9aa0a8));                                   // input
                 }
-                lbtn (rBox (row.y), "R", t->recordArm, juce::Colour (0xffc8281a));   // record = red
-                lbtn ({ 138, row.y + rowHeight - 22, 18, 16 }, "I", false, juce::Colour (0xff9aa0a8));   // input (cosmetic)
 
                 auto vb = vBox (row.y);                                              // recessed slider + value fill + cap
                 g.setColour (juce::Colour (0xff2e2d2d)); g.fillRoundedRectangle (vb.toFloat(), 3.0f);
