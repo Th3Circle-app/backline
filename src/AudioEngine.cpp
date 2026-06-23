@@ -6,26 +6,30 @@
 //==============================================================================
 void AudioEngine::Mixer::recomputeLength()
 {
-    juce::int64 len = (juce::int64) (minLengthSeconds * rate);
+    const double rt = rate.load();
+    juce::int64 len = (juce::int64) (minLengthSeconds * rt);
     for (auto& t : tracks)
         for (auto& c : t->clips)
-            len = juce::jmax (len, (juce::int64) (c.timelineEnd() * rate));
+            len = juce::jmax (len, (juce::int64) (c.timelineEnd() * rt));
     totalLen.store (len, std::memory_order_relaxed);
 }
 
 void AudioEngine::Mixer::prepareToPlay (int samplesPerBlock, double sr)
 {
     rate = sr;
-    preparedBlock = juce::jmax (1, samplesPerBlock);
-    ensureScratch (2, preparedBlock);
+    preparedBlock = juce::jmax (preparedBlock.load(), juce::jmax (1, samplesPerBlock));   // grow-only
+    const int blk = preparedBlock.load();
+    ensureScratch (2, blk);                       // allocate outside the lock
 
+    // Device (re)start pauses the audio callback, so preparing under the lock here cannot
+    // contend with a live getNextAudioBlock; the lock just guards the chain vector traversal.
     const juce::ScopedLock sl (lock);
     for (auto& t : tracks)
         for (auto& p : t->chain)
             if (p != nullptr)
             {
-                p->setRateAndBufferSizeDetails (sr, preparedBlock);
-                p->prepareToPlay (sr, preparedBlock);
+                p->setRateAndBufferSizeDetails (sr, blk);
+                p->prepareToPlay (sr, blk);
             }
     recomputeLength();
 }
@@ -45,6 +49,7 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
     const int numCh = juce::jmin (info.buffer->getNumChannels(), scratch.getNumChannels());
     const int n     = info.numSamples;
     const juce::int64 blockStart = pos.load (std::memory_order_relaxed);
+    const double rt = rate.load();
     if (numCh <= 0 || n <= 0 || n > scratch.getNumSamples()) { pos.store (blockStart + n, std::memory_order_relaxed); return; }
 
     for (auto& tptr : tracks)
@@ -63,14 +68,14 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
         {
             for (const auto& c : t->clips)
             {
-                const juce::int64 clipStart = (juce::int64) (c.timelineStart * rate);
-                const juce::int64 clipEnd   = (juce::int64) (c.timelineEnd()  * rate);
+                const juce::int64 clipStart = (juce::int64) (c.timelineStart * rt);
+                const juce::int64 clipEnd   = (juce::int64) (c.timelineEnd()  * rt);
                 const juce::int64 ovStart = juce::jmax (clipStart, blockStart);
                 const juce::int64 ovEnd   = juce::jmin (clipEnd, blockStart + n);
                 if (ovEnd <= ovStart) continue;
 
                 const int dest = (int) (ovStart - blockStart);
-                const juce::int64 srcStart = (juce::int64) (c.sourceIn * rate) + (ovStart - clipStart);
+                const juce::int64 srcStart = (juce::int64) (c.sourceIn * rt) + (ovStart - clipStart);
                 if (srcStart < 0) continue;
 
                 int count = (int) (ovEnd - ovStart);
@@ -78,7 +83,9 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 if (count <= 0) continue;
 
                 const juce::int64 clipLenS = clipEnd - clipStart;
-                const int fade = (int) juce::jmin ((juce::int64) (0.005 * rate), clipLenS / 2);   // 5 ms declick
+                const juce::int64 srcAvail = tLen - (juce::int64) (c.sourceIn * rt);          // samples actually decoded
+                const juce::int64 effLen   = juce::jmax ((juce::int64) 1, juce::jmin (clipLenS, srcAvail));   // fade against the real audio end
+                const int fade = (int) juce::jmin ((juce::int64) (0.005 * rt), effLen / 2);   // 5 ms declick
 
                 for (int ch = 0; ch < numCh; ++ch)
                 {
@@ -91,8 +98,8 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                         if (fade > 0)
                         {
                             const juce::int64 cl = (ovStart - clipStart) + i;
-                            if (cl < fade)                 fdf = (float) cl / (float) fade;
-                            else if (cl > clipLenS - fade) fdf = (float) (clipLenS - cl) / (float) fade;
+                            if (cl < fade)               fdf = (float) cl / (float) fade;
+                            else if (cl > effLen - fade) fdf = (float) (effLen - cl) / (float) fade;
                             fdf = juce::jlimit (0.0f, 1.0f, fdf);
                         }
                         dp[i] += sp[i] * fdf;
@@ -350,7 +357,7 @@ bool AudioEngine::renderMixToFile (const juce::File& outWav, double lengthSecond
     if (writer == nullptr) return false;
     os.release();                           // the writer owns the stream now
 
-    const int block = juce::jmax (64, mixer.preparedBlock);   // match plugins' prepared block size
+    const int block = juce::jmax (1, mixer.preparedBlock.load());   // == scratch + plugins' prepared block (no silent export on tiny buffers)
     juce::AudioBuffer<float> buf (2, block);
     const juce::int64 total = (juce::int64) (lengthSeconds * deviceRate);
     juce::int64 done = 0;

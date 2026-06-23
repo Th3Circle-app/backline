@@ -95,10 +95,10 @@ private:
         std::vector<std::unique_ptr<TrackData>> tracks;
         std::atomic<juce::int64> pos { 0 };       // atomic: read unlocked by the transport/UI
         std::atomic<juce::int64> totalLen { 0 };
-        double rate = 44100.0;
+        std::atomic<double> rate { 44100.0 };     // atomic: written by device-prepare thread, read on message thread
         double minLengthSeconds = 0.0;
         juce::AudioBuffer<float> scratch;         // reused per-track render buffer (no realtime alloc)
-        int    preparedBlock = 512;
+        std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
     };
 
     static juce::AudioBuffer<float> resampleBuffer (const juce::AudioBuffer<float>& in, double inRate, double outRate);

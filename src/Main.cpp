@@ -167,8 +167,7 @@ public:
 
         startTimerHz (30);
 
-        loadPersistedPluginList();          // instant on subsequent launches
-        if (! pluginsScanned) startPluginScan();
+        loadPersistedPluginList();          // instant; the user triggers a (re)scan from the track menu
     }
 
     ~MainComponent() override
@@ -985,13 +984,16 @@ private:
         scanning = true;
         titleLabel.setText ("Scanning audio plugins...", juce::dontSendNotification);
         auto a = alive;
-        std::thread ([this, a]
+        const juce::File dead = pluginListFile().getSiblingFile ("scan_crashlog.txt");   // skip a plugin that crashed the last scan
+        std::thread ([this, a, dead]
         {
+            juce::AudioPluginFormatManager fmts;   // LOCAL formats: the worker never touches the engine during the scan
+            juce::addDefaultFormatsToManager (fmts);
             juce::KnownPluginList local;
-            for (auto* fmt : audioEngine.getPluginFormats().getFormats())
+            for (auto* fmt : fmts.getFormats())
             {
                 if (! a->load()) return;
-                juce::PluginDirectoryScanner scanner (local, *fmt, fmt->getDefaultLocationsToSearch(), true, juce::File());
+                juce::PluginDirectoryScanner scanner (local, *fmt, fmt->getDefaultLocationsToSearch(), true, dead);
                 juce::String nm;
                 while (scanner.scanNextFile (true, nm)) { if (! a->load()) return; }
             }
