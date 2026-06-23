@@ -852,6 +852,7 @@ private:
         }
         keysButton.setButtonText ("Keys: " + profileName (p));
         applySkinForProfile (p);   // switching the station also reskins the app to that DAW
+        menuItemsChanged();        // rebuild the menu bar to that DAW's menu set
         grabKeyboardFocus();
     }
 
@@ -888,13 +889,41 @@ private:
     }
 
     //==========================================================================
-    // Top menu bar (native macOS menu bar, like Logic / Pro Tools / Ableton).
-    juce::StringArray getMenuBarNames() override { return { "File", "Edit", "Track", "Transport", "Station" }; }
+    // Top menu bar — the active station mirrors that DAW's real menu bar:
+    //   Logic     : File Edit Track Navigate Record Mix View Window Help
+    //   Pro Tools : File Edit View Track Clip Event AudioSuite Options Setup Window Help
+    //   Ableton   : File Edit Create View Options Help
+    //   Layback   : File Edit Track Transport View
+    juce::StringArray getMenuBarNames() override
+    {
+        switch (keyProfile)
+        {
+            case KeyProfile::Logic:    return { "File", "Edit", "Track", "Navigate", "Record", "Mix", "View", "Window", "Help" };
+            case KeyProfile::ProTools: return { "File", "Edit", "View", "Track", "Clip", "Event", "AudioSuite", "Options", "Setup", "Window", "Help" };
+            case KeyProfile::Ableton:  return { "File", "Edit", "Create", "View", "Options", "Help" };
+            default:                   return { "File", "Edit", "Track", "Transport", "View" };
+        }
+    }
 
-    juce::PopupMenu getMenuForIndex (int index, const juce::String&) override
+    juce::PopupMenu getMenuForIndex (int, const juce::String& name) override
     {
         juce::PopupMenu m;
-        if (index == 0)        // File
+        const bool hasTrack = validTrack (selGroup, selTrack);
+
+        auto addSkin = [&] (juce::PopupMenu& pm)
+        {
+            juce::PopupMenu sk;
+            sk.addItem (9020, "Layback",      true, keyProfile == KeyProfile::Layback);
+            sk.addItem (9021, "Logic",        true, keyProfile == KeyProfile::Logic);
+            sk.addItem (9022, "Pro Tools",    true, keyProfile == KeyProfile::ProTools);
+            sk.addItem (9023, "Ableton Live", true, keyProfile == KeyProfile::Ableton);
+            pm.addSubMenu ("Skin", sk);
+        };
+        auto fxItems = [&] { m.addItem (9011, "Insert EQ on Selected Track", hasTrack);
+                             m.addItem (9012, "Insert Compressor on Selected Track", hasTrack); };
+        auto rescan  = [&] { m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
+
+        if (name == "File")
         {
             m.addItem (9001, "New Project");
             m.addItem (9002, "Open Project...");
@@ -905,7 +934,7 @@ private:
             m.addItem (9005, "Export Video + Audio...");
             m.addItem (9006, "Export Audio (WAV)...");
         }
-        else if (index == 1)   // Edit
+        else if (name == "Edit")
         {
             m.addCommandItem (&commandManager, LSCmd::Undo);
             m.addCommandItem (&commandManager, LSCmd::Redo);
@@ -913,31 +942,72 @@ private:
             m.addCommandItem (&commandManager, LSCmd::Split);
             m.addCommandItem (&commandManager, LSCmd::DeleteClip);
         }
-        else if (index == 2)   // Track
+        else if (name == "Track")
         {
             m.addItem (9010, "Import Audio Track...", activeGroup >= 0);
             m.addSeparator();
-            const bool hasTrack = validTrack (selGroup, selTrack);
-            m.addItem (9011, "Insert EQ on Selected Track",         hasTrack);
-            m.addItem (9012, "Insert Compressor on Selected Track", hasTrack);
-            m.addSeparator();
-            m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning);
+            fxItems();
         }
-        else if (index == 3)   // Transport
+        else if (name == "Create")          // Ableton
+        {
+            m.addItem (9004, "Add Video...");
+            m.addItem (9010, "Import Audio Track...", activeGroup >= 0);
+            m.addSeparator();
+            fxItems();
+        }
+        else if (name == "Mix" || name == "AudioSuite")   // Logic / Pro Tools
+        {
+            fxItems();
+            m.addSeparator();
+            rescan();
+        }
+        else if (name == "Transport" || name == "Navigate")
         {
             m.addCommandItem (&commandManager, LSCmd::TogglePlay);
-            m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
-            m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            if (name == "Navigate") m.addItem (9030, "Go to Start");
             m.addSeparator();
+            m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
             m.addCommandItem (&commandManager, LSCmd::NudgeLeft);
             m.addCommandItem (&commandManager, LSCmd::NudgeRight);
         }
-        else if (index == 4)   // Station (skin + keymap)
+        else if (name == "Clip")            // Pro Tools
         {
-            m.addItem (9020, "Layback",      true, keyProfile == KeyProfile::Layback);
-            m.addItem (9021, "Logic",        true, keyProfile == KeyProfile::Logic);
-            m.addItem (9022, "Pro Tools",    true, keyProfile == KeyProfile::ProTools);
-            m.addItem (9023, "Ableton Live", true, keyProfile == KeyProfile::Ableton);
+            m.addCommandItem (&commandManager, LSCmd::Split);
+            m.addCommandItem (&commandManager, LSCmd::DeleteClip);
+        }
+        else if (name == "Event")           // Pro Tools
+        {
+            m.addCommandItem (&commandManager, LSCmd::NudgeLeft);
+            m.addCommandItem (&commandManager, LSCmd::NudgeRight);
+            m.addSeparator();
+            m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+        }
+        else if (name == "Record")          // Logic (recording is Phase C)
+        {
+            m.addItem (9099, "Record  (coming soon)", false);
+        }
+        else if (name == "View")
+        {
+            m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
+            m.addSeparator();
+            addSkin (m);
+        }
+        else if (name == "Options" || name == "Setup")    // Ableton / Pro Tools
+        {
+            m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            m.addSeparator();
+            rescan();
+            m.addSeparator();
+            addSkin (m);
+        }
+        else if (name == "Window")
+        {
+            m.addItem (9040, "Close All Plugin Windows", ! pluginWindows.empty());
+        }
+        else if (name == "Help")
+        {
+            m.addItem (9098, "Layback Station Help", false);
         }
         return m;
     }
@@ -960,6 +1030,8 @@ private:
             case 9021: applyKeyProfile (KeyProfile::Logic);    break;
             case 9022: applyKeyProfile (KeyProfile::ProTools); break;
             case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
+            case 9030: seekAll (0.0); break;
+            case 9040: closeAllPluginWindows(); break;
             default: break;
         }
     }
