@@ -358,6 +358,29 @@ public:
             g.setColour (s.control);
             g.drawRect (viewerFrame.expanded (2), 1);
         }
+
+        // Layback signature (default layout only): LAYBACK• wordmark + the "lay-back line" accent hairline
+        if (laf.skin.layout == 0)
+        {
+            if (! laybackWordmark.isEmpty())
+            {
+                auto w = laybackWordmark;
+                g.setColour (s.text);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (14.0f)));
+                g.drawText ("LAYBACK", w, juce::Justification::centredLeft, false);
+                g.setColour (s.accent);
+                g.fillEllipse ((float) (w.getX() + 82), (float) w.getCentreY() - 2.5f, 5.0f, 5.0f);
+            }
+            if (! viewerFrame.isEmpty())
+            {
+                const int y = viewerFrame.getBottom() + 4;
+                g.setGradientFill (juce::ColourGradient (s.accent, (float) viewerFrame.getX(), 0.0f,
+                                                         juce::Colour (0xff3fe0ff), (float) viewerFrame.getRight(), 0.0f, false));
+                g.fillRect (viewerFrame.getX(), y, viewerFrame.getWidth(), 2);
+                g.setColour (s.accent.withAlpha (0.12f));
+                g.fillRect (viewerFrame.getX(), y + 2, viewerFrame.getWidth(), 3);
+            }
+        }
     }
 
     void resized() override
@@ -375,7 +398,10 @@ public:
     void layoutDefault()
     {
         auto r = getLocalBounds().reduced (12);
-        titleLabel.setBounds (r.removeFromTop (22));
+        auto top = r.removeFromTop (24);
+        laybackWordmark = top.removeFromLeft (150);   // brand wordmark, drawn in paint()
+        top.removeFromLeft (10);
+        titleLabel.setBounds (top);
         r.removeFromTop (6);
 
         if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
@@ -1761,7 +1787,7 @@ private:
     KeyProfile keyProfile = KeyProfile::Layback;
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> transportBand, viewerFrame;
+    juce::Rectangle<int> transportBand, viewerFrame, laybackWordmark;
 
     std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate

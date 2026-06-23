@@ -61,17 +61,18 @@ struct Skin
                 s.flatClips = true; s.buttonLook = 3; s.buttonRadius = 2.0f; s.layout = 2; break;    // flat + video docked right
 
             case Layback:
-            default:        // our own: deep blue-black, blue accent, blue/green clips
+            default:        // OUR flagship "Midnight Indigo Glass": violet/cyan, backlit-glass keys
                 s.name = "Layback";
-                s.windowBg = juce::Colour (0xff0e0f13); s.panel = juce::Colour (0xff171a21); s.control = juce::Colour (0xff2b303b);
-                s.accent = juce::Colour (0xff4a9eff); s.text = juce::Colour (0xffe6e8ec); s.muted = juce::Colour (0xff9aa0a6);
-                s.ruler = juce::Colour (0xff1b1d22); s.headerTop = juce::Colour (0xff1c2029); s.headerBottom = juce::Colour (0xff13161d);
-                s.activeRow = juce::Colour (0xff1d2735); s.activeStrip = juce::Colour (0xff63b3ed);
-                s.rowEven = juce::Colour (0xff121419); s.rowOdd = juce::Colour (0xff15171d);
-                s.videoClip = juce::Colour (0xff3b78c2); s.videoStrip = juce::Colour (0xff3b78c2);
-                s.audioClip = juce::Colour (0xff2f9e6e); s.audioStrip = juce::Colour (0xff2f9e6e);
-                s.waveform = juce::Colour (0xffd9ffec); s.timecodeText = juce::Colour (0xff8fd6ff); s.timecodeBg = juce::Colour (0xff0b0d11);
-                s.flatClips = false; s.buttonLook = 0; s.buttonRadius = 5.0f; break;   // glossy
+                s.windowBg = juce::Colour (0xff0b0a14); s.panel = juce::Colour (0xff15131f); s.control = juce::Colour (0xff211d30);
+                s.accent = juce::Colour (0xff7c5cff); s.text = juce::Colour (0xffeae8f5); s.muted = juce::Colour (0xff7d7895);
+                s.ruler = juce::Colour (0xff322c47); s.headerTop = juce::Colour (0xff241d3a); s.headerBottom = juce::Colour (0xff111020);
+                s.activeRow = juce::Colour (0xff1d1830); s.activeStrip = juce::Colour (0xff7c5cff);
+                s.rowEven = juce::Colour (0xff121120); s.rowOdd = juce::Colour (0xff0e0d18);
+                s.videoClip = juce::Colour (0xff2a4f8c); s.videoStrip = juce::Colour (0xff3fb6ff);
+                s.audioClip = juce::Colour (0xff4a3a8f); s.audioStrip = juce::Colour (0xff7c5cff);
+                s.waveform = juce::Colour (0xff9fe7ff); s.timecodeText = juce::Colour (0xff8affe6); s.timecodeBg = juce::Colour (0xff080711);
+                s.flatClips = false; s.buttonLook = 4; s.buttonRadius = 7.0f; break;   // backlit glass key
+
         }
         return s;
     }

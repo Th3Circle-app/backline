@@ -37,7 +37,7 @@ public:
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& backgroundColour,
                                bool over, bool down) override
     {
-        paintControlShape (g, b.getLocalBounds().toFloat().reduced (0.5f), backgroundColour, over, down);
+        paintControlShape (g, b.getLocalBounds().toFloat().reduced (0.5f), backgroundColour, over, down, false);
     }
 
     // Loop / Snap render as lit DAW-style buttons (not checkboxes): on = accent-lit.
@@ -45,7 +45,7 @@ public:
     {
         auto r = b.getLocalBounds().toFloat().reduced (0.5f);
         const bool on = b.getToggleState();
-        paintControlShape (g, r, on ? skin.accent : skin.control, over, down);
+        paintControlShape (g, r, on ? skin.accent : skin.control, over, down, on);
         g.setColour (on ? juce::Colours::white : skin.text);
         g.setFont (juce::Font (juce::FontOptions().withHeight (juce::jmin (13.0f, r.getHeight() * 0.46f))));
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
@@ -60,7 +60,7 @@ public:
 
 private:
     // One control shape, drawn in the active DAW's idiom.
-    void paintControlShape (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour bg, bool over, bool down)
+    void paintControlShape (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour bg, bool over, bool down, bool lit)
     {
         auto c = bg;
         if (down)      c = c.darker (0.25f);
@@ -69,6 +69,26 @@ private:
 
         switch (skin.buttonLook)
         {
+            case 4:  // Backlit glass key (Layback): recessed body + violet->cyan underbar
+            {
+                auto top = skin.control, bot = skin.panel;
+                if (down)     { top = top.darker (0.06f); bot = bot.darker (0.06f); }
+                else if (lit) { top = top.brighter (0.12f); }
+                g.setGradientFill (juce::ColourGradient (top, r.getX(), r.getY(), bot, r.getX(), r.getBottom(), false));
+                g.fillRoundedRectangle (r, rad);
+                g.setColour (skin.windowBg.withAlpha (0.5f));                       // inner shadow (top + left)
+                g.drawLine (r.getX() + rad * 0.5f, r.getY() + 1.0f, r.getRight() - rad * 0.5f, r.getY() + 1.0f, 1.0f);
+                g.drawLine (r.getX() + 1.0f, r.getY() + rad * 0.5f, r.getX() + 1.0f, r.getBottom() - rad * 0.5f, 1.0f);
+                g.setColour (over ? skin.accent.withAlpha (0.45f) : skin.ruler);    // hairline border
+                g.drawRoundedRectangle (r, rad, 1.0f);
+                const float a  = lit ? 1.0f : (over ? 0.95f : 0.60f);              // violet -> cyan underbar
+                const float th = lit ? 3.0f : 2.0f;
+                juce::Rectangle<float> ub (r.getX() + 4.0f, r.getBottom() - 3.5f - th * 0.5f, juce::jmax (0.0f, r.getWidth() - 8.0f), th);
+                g.setGradientFill (juce::ColourGradient (skin.accent.withAlpha (a), ub.getX(), 0.0f,
+                                                         juce::Colour (0xff3fe0ff).withAlpha (a), ub.getRight(), 0.0f, false));
+                g.fillRoundedRectangle (ub, th * 0.5f);
+                break;
+            }
             case 3:  // Flat (Ableton): solid fill, thin border, near-square
                 g.setColour (c); g.fillRoundedRectangle (r, rad);
                 g.setColour (c.brighter (0.30f)); g.drawRoundedRectangle (r, rad, 1.0f);
