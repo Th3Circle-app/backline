@@ -104,7 +104,7 @@ private:
 
     Skin   skin = Skin::forDaw (Skin::Layback);
 
-    static constexpr int headerW     = 184;
+    int                  headerW     = 184;   // widened to 280 for Logic-style headers
     static constexpr int rulerHeight = 22;
     static constexpr int rowHeight   = 60;
     static constexpr int importRowH  = 26;
