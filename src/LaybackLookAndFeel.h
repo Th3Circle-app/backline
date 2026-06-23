@@ -35,18 +35,20 @@ public:
     }
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& backgroundColour,
-                               bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
+                               bool over, bool down) override
+    {
+        paintControlShape (g, b.getLocalBounds().toFloat().reduced (0.5f), backgroundColour, over, down);
+    }
+
+    // Loop / Snap render as lit DAW-style buttons (not checkboxes): on = accent-lit.
+    void drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool over, bool down) override
     {
         auto r = b.getLocalBounds().toFloat().reduced (0.5f);
-        auto c = backgroundColour;
-        if (shouldDrawButtonAsDown)             c = c.darker (0.25f);
-        else if (shouldDrawButtonAsHighlighted) c = c.brighter (0.12f);
-
-        g.setGradientFill (juce::ColourGradient (c.brighter (0.06f), r.getX(), r.getY(),
-                                                 c.darker (0.12f),  r.getX(), r.getBottom(), false));
-        g.fillRoundedRectangle (r, 5.0f);
-        g.setColour (skin.windowBg.darker (0.4f));
-        g.drawRoundedRectangle (r, 5.0f, 1.0f);
+        const bool on = b.getToggleState();
+        paintControlShape (g, r, on ? skin.accent : skin.control, over, down);
+        g.setColour (on ? juce::Colours::white : skin.text);
+        g.setFont (juce::Font (juce::FontOptions().withHeight (juce::jmin (13.0f, r.getHeight() * 0.46f))));
+        g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
     }
 
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
@@ -55,4 +57,50 @@ public:
     }
 
     juce::Font getPopupMenuFont() override { return juce::Font (juce::FontOptions().withHeight (14.0f)); }
+
+private:
+    // One control shape, drawn in the active DAW's idiom.
+    void paintControlShape (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour bg, bool over, bool down)
+    {
+        auto c = bg;
+        if (down)      c = c.darker (0.25f);
+        else if (over) c = c.brighter (0.12f);
+        const float rad = skin.buttonRadius;
+
+        switch (skin.buttonLook)
+        {
+            case 3:  // Flat (Ableton): solid fill, thin border, near-square
+                g.setColour (c); g.fillRoundedRectangle (r, rad);
+                g.setColour (c.brighter (0.30f)); g.drawRoundedRectangle (r, rad, 1.0f);
+                break;
+
+            case 2:  // Beveled (Pro Tools): industrial, top bevel + dark outline
+                g.setGradientFill (juce::ColourGradient (c.brighter (0.10f), r.getX(), r.getY(),
+                                                         c.darker (0.24f),  r.getX(), r.getBottom(), false));
+                g.fillRoundedRectangle (r, rad);
+                g.setColour (c.brighter (0.45f));
+                g.drawLine (r.getX() + rad, r.getY() + 0.8f, r.getRight() - rad, r.getY() + 0.8f, 1.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.drawRoundedRectangle (r, rad, 1.0f);
+                break;
+
+            case 1:  // Metallic (Logic): bright top sheen, soft rounded
+                g.setGradientFill (juce::ColourGradient (c.brighter (0.32f), r.getX(), r.getY(),
+                                                         c.darker (0.10f),  r.getX(), r.getBottom(), false));
+                g.fillRoundedRectangle (r, rad);
+                g.setColour (juce::Colours::white.withAlpha (0.20f));
+                g.drawLine (r.getX() + rad, r.getY() + 1.0f, r.getRight() - rad, r.getY() + 1.0f, 1.3f);
+                g.setColour (c.darker (0.55f));
+                g.drawRoundedRectangle (r, rad, 1.0f);
+                break;
+
+            default: // Glossy (Layback)
+                g.setGradientFill (juce::ColourGradient (c.brighter (0.06f), r.getX(), r.getY(),
+                                                         c.darker (0.12f),  r.getX(), r.getBottom(), false));
+                g.fillRoundedRectangle (r, rad);
+                g.setColour (skin.windowBg.darker (0.4f));
+                g.drawRoundedRectangle (r, rad, 1.0f);
+                break;
+        }
+    }
 };
