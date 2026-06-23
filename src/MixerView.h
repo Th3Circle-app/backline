@@ -18,6 +18,7 @@ struct ChannelStrip : public juce::Component
     AudioEngine* engine = nullptr;
     Skin skin = Skin::forDaw (Skin::Layback);
     float meter = 0.0f;
+    juce::StringArray fxNames;   // cached insert names (paint must not lock the audio engine)
 
     juce::Slider fader, pan;
     juce::TextButton mute { "M" }, solo { "S" }, fx { "Inserts" };
@@ -102,15 +103,13 @@ struct ChannelStrip : public juce::Component
         g.setColour (isMaster ? skin.accent : skin.audioStrip);     // colour cap
         g.fillRect (r.getX() + 3, r.getY() + 3, r.getWidth() - 6, 3);
 
-        if (! isMaster && engine != nullptr && engineId >= 0)       // insert names
+        if (! isMaster && ! fxNames.isEmpty())       // cached insert names (no locking in paint)
         {
-            const int cnt = engine->trackPluginCount (engineId);
             g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
-            for (int i = 0; i < juce::jmin (cnt, 3); ++i)
+            for (int i = 0; i < juce::jmin (fxNames.size(), 3); ++i)
             {
                 g.setColour (skin.text.withAlpha (0.85f));
-                g.drawText (engine->trackPluginName (engineId, i),
-                            r.getX() + 5, fxNamesY + i * 12, r.getWidth() - 10, 11,
+                g.drawText (fxNames[i], r.getX() + 5, fxNamesY + i * 12, r.getWidth() - 10, 11,
                             juce::Justification::centredLeft, true);
             }
         }
@@ -196,8 +195,11 @@ public:
     {
         if (engine == nullptr) return;
         for (auto& s : strips)
-            s->setMeter (s->isMaster ? engine->getMasterPeak()
-                                     : (s->engineId >= 0 ? engine->getTrackPeak (s->engineId) : 0.0f));
+        {
+            const float pk = s->isMaster ? engine->getMasterPeak()
+                                         : (s->engineId >= 0 ? engine->getTrackPeak (s->engineId) : 0.0f);
+            if (pk >= 0.0f) s->setMeter (pk);   // -1 => the audio lock was busy this tick; hold last
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -229,6 +231,9 @@ private:
         auto s = std::make_unique<ChannelStrip> (master);
         s->group = g; s->track = t; s->engineId = tr ? tr->engineId : -1;
         s->engine = engine; s->skin = skin;
+        if (! master && engine != nullptr && s->engineId >= 0)       // cache insert names once (off the paint path)
+            for (int i = 0, cnt = engine->trackPluginCount (s->engineId); i < cnt; ++i)
+                s->fxNames.add (engine->trackPluginName (s->engineId, i));
         if (! master && tr != nullptr)
         {
             s->name.setText (tr->name, juce::dontSendNotification);

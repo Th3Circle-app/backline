@@ -141,7 +141,7 @@ public:
         addAndMakeVisible (timelineViewport);
 
         mixerView.setEngine (&audioEngine);
-        mixerView.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; applyMixGains(); } };
+        mixerView.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); } };
         mixerView.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.pan = p; audioEngine.setTrackPan (tr.engineId, p); } };
         mixerView.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); } };
         mixerView.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); } };
@@ -518,6 +518,19 @@ private:
             const bool aud = ! t->mute && (! anySolo || t->solo);
             audioEngine.setTrackGain (t->engineId, aud ? t->volume : 0.0f);   // fold in the channel fader
         }
+    }
+
+    // Single-track gain update for a fader drag: one engine call instead of re-setting every track.
+    void updateTrackGain (int g, int t)
+    {
+        if (g != activeGroup || ! validTrack (g, t)) return;
+        auto* ag = activeGroupPtr();
+        if (ag == nullptr) return;
+        bool anySolo = ag->videoSolo;
+        for (auto& tt : ag->tracks) if (tt->solo) anySolo = true;
+        auto& tr = *groups[(size_t) g]->tracks[(size_t) t];
+        const bool aud = ! tr.mute && (! anySolo || tr.solo);
+        audioEngine.setTrackGain (tr.engineId, aud ? tr.volume : 0.0f);
     }
 
     void pushActiveClips (int g)   // sync the engine to a track edit in the active group
@@ -1091,8 +1104,8 @@ private:
             case 9005: exportVideo();   break;
             case 9006: exportAudio();   break;
             case 9010: if (activeGroup >= 0) importTrack (activeGroup); break;
-            case 9011: if (validTrack (selGroup, selTrack)) audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 0); break;
-            case 9012: if (validTrack (selGroup, selTrack)) audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 1); break;
+            case 9011: if (validTrack (selGroup, selTrack)) { audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 0); refreshMixer(); } break;
+            case 9012: if (validTrack (selGroup, selTrack)) { audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 1); refreshMixer(); } break;
             case 9013: startPluginScan(); break;
             case 9020: applyKeyProfile (KeyProfile::Layback);  break;
             case 9021: applyKeyProfile (KeyProfile::Logic);    break;
@@ -1340,6 +1353,7 @@ private:
                 if (open) openPluginEditor (engineId, idx);
                 else { closePluginWindowForProc (audioEngine.trackPlugin (engineId, idx)); audioEngine.removeTrackPlugin (engineId, idx); }
             }
+            refreshMixer();
             restoreKeyFocus();
         });
     }
@@ -1475,6 +1489,7 @@ private:
                 root->setProperty ("loopEnabled", loopEnabled);
                 root->setProperty ("loopStart", loopStart);
                 root->setProperty ("loopEnd", loopEnd);
+                root->setProperty ("masterGain", audioEngine.getMasterGain());
 
                 juce::var garr;
                 for (auto& g : groups)
@@ -1553,6 +1568,7 @@ private:
         timeline.setGroups (&groups);
         activeGroup = -1; selGroup = selTrack = selClip = -1;
         playhead = 0.0; reachedEnd = false; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
+        audioEngine.setMasterGain (1.0f);
         clearHistory();
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
@@ -1629,6 +1645,7 @@ private:
         loopEnabled = (bool)   root.getProperty ("loopEnabled", false);
         loopStart   = (double) root.getProperty ("loopStart", 0.0);
         loopEnd     = (double) root.getProperty ("loopEnd", 0.0);
+        audioEngine.setMasterGain ((float) root.getProperty ("masterGain", 1.0));
         if (groups.empty()) { loopEnabled = false; loopStart = loopEnd = 0.0; }
         loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
 

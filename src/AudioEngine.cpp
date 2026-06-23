@@ -324,9 +324,11 @@ float AudioEngine::getMasterPeak() const      { return mixer.masterPeak.load(); 
 
 float AudioEngine::getTrackPeak (int trackId)
 {
-    const juce::ScopedLock sl (mixer.lock);
-    if (auto* t = findTrack (trackId)) return t->peak.load();
-    return 0.0f;
+    if (! mixer.lock.tryEnter()) return -1.0f;   // never block the message thread (meters) behind a slow plugin
+    float v = 0.0f;
+    if (auto* t = findTrack (trackId)) v = t->peak.load();
+    mixer.lock.exit();
+    return v;
 }
 
 void AudioEngine::setMinLengthSeconds (double seconds)
