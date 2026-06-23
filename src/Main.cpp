@@ -13,6 +13,7 @@
 #include "LaybackLookAndFeel.h"
 #include "MixerView.h"
 #include "LogicControlBar.h"
+#include "LogicInspector.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -122,6 +123,15 @@ public:
         logicBar.isCycle   = [this] { return loopEnabled; };
         addChildComponent (logicBar);
 
+        logicInspector.setEngine (&audioEngine);
+        logicInspector.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
+        logicInspector.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
+        addChildComponent (logicInspector);
+
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
         addAndMakeVisible (openButton);
@@ -163,7 +173,7 @@ public:
         timeline.onEditBegin     = [this] { pushUndo(); };
         timeline.onClipChanged   = [this] (int g, int t, int c, AudioClip nc) { clipChanged (g, t, c, nc); };
         timeline.onClipMenu      = [this] (int g, int t, int c, double tm) { showClipMenu (g, t, c, tm); };
-        timeline.onClipSelected  = [this] (int g, int t, int c) { selGroup = g; selTrack = t; selClip = c; timeline.setSelection (g, t, c); };
+        timeline.onClipSelected  = [this] (int g, int t, int c) { selGroup = g; selTrack = t; selClip = c; timeline.setSelection (g, t, c); refreshInspector(); };
         timeline.onToggleExpand  = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->expanded = ! groups[(size_t) g]->expanded; resized(); timeline.repaint(); } };
         timeline.onImportTrack   = [this] (int g) { importTrack (g); };
         timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
@@ -459,6 +469,7 @@ public:
     void setLogicChrome (bool logic)
     {
         logicBar.setVisible (logic);
+        logicInspector.setVisible (logic);
         for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &videoButton })
             c->setVisible (! logic);
         loopToggle.setVisible (! logic);
@@ -479,9 +490,19 @@ public:
 
         area.removeFromTop (4);
         if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
+
+        logicInspector.setBounds (area.removeFromLeft (200));   // Logic left Inspector (channel strip)
+        logicInspector.setSelection (&groups, activeGroup, selTrack);
+        area.removeFromLeft (2);
+
         timelineViewport.setBounds (area);
         viewerFrame = {};
         updateTimelineSize();
+    }
+
+    void refreshInspector()
+    {
+        if (laf.skin.layout == 1) logicInspector.setSelection (&groups, activeGroup, selTrack);
     }
 
     // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
@@ -1064,6 +1085,7 @@ private:
         { win->setBackgroundColour (s.windowBg); win->repaint(); }
         mixerView.setSkin (s);
         logicBar.setSkin (s);
+        logicInspector.setSkin (s);
         resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
@@ -1851,6 +1873,7 @@ private:
 
         timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
         logicBar.setPosition (formatTime (playhead), formatTime (timelineLength()));
+        logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
     }
 
@@ -1891,7 +1914,8 @@ private:
 
     MixerView mixerView;
     bool      mixerVisible = false;
-    LogicControlBar logicBar;   // shown only for the Logic station
+    LogicControlBar logicBar;     // shown only for the Logic station
+    LogicInspector  logicInspector;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
