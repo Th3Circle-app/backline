@@ -43,6 +43,7 @@ public:
     std::function<void (int)>                      onImportTrack;   // group
     std::function<void (int, int)>                 onTrackMute;     // group, track
     std::function<void (int, int)>                 onTrackSolo;     // group, track
+    std::function<void (int, int)>                 onTrackRecord;   // group, track (record-enable)
     std::function<void (int)>                      onVideoMute;     // group
     std::function<void (int)>                      onVideoSolo;     // group
     std::function<void (int)>                      onActivateGroup; // group
@@ -74,6 +75,7 @@ private:
     juce::Rectangle<float> clipRectAt (int rowYpos, const AudioClip&) const;
     juce::Rectangle<int>   mBox (int rowYpos) const;
     juce::Rectangle<int>   sBox (int rowYpos) const;
+    juce::Rectangle<int>   rBox (int rowYpos) const;   // Logic record-enable box (empty otherwise)
     juce::Rectangle<int>   disclosureRectAt (int rowYpos) const;
     void seekFromMouse (const juce::MouseEvent&);
     void drawMS (juce::Graphics&, int rowYpos, bool mute, bool solo);

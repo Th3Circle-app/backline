@@ -116,8 +116,21 @@ juce::Rectangle<float> TimelineComponent::clipRectAt (int rowYpos, const AudioCl
     return { x0, (float) (rowYpos + 8), x1 - x0, (float) (rowHeight - 16) };
 }
 
-juce::Rectangle<int> TimelineComponent::sBox (int rowYpos) const { return { headerW - 30, rowYpos + rowHeight / 2 - 9, 22, 18 }; }
-juce::Rectangle<int> TimelineComponent::mBox (int rowYpos) const { return { headerW - 56, rowYpos + rowHeight / 2 - 9, 22, 18 }; }
+juce::Rectangle<int> TimelineComponent::mBox (int rowYpos) const
+{
+    if (skin.logicHeaders) return { 40, rowYpos + rowHeight - 22, 18, 16 };
+    return { headerW - 56, rowYpos + rowHeight / 2 - 9, 22, 18 };
+}
+juce::Rectangle<int> TimelineComponent::sBox (int rowYpos) const
+{
+    if (skin.logicHeaders) return { 60, rowYpos + rowHeight - 22, 18, 16 };
+    return { headerW - 30, rowYpos + rowHeight / 2 - 9, 22, 18 };
+}
+juce::Rectangle<int> TimelineComponent::rBox (int rowYpos) const
+{
+    if (! skin.logicHeaders) return {};
+    return { 80, rowYpos + rowHeight - 22, 18, 16 };
+}
 juce::Rectangle<int> TimelineComponent::disclosureRectAt (int rowYpos) const { return { 6, rowYpos + rowHeight / 2 - 8, 16, 16 }; }
 
 //==============================================================================
@@ -247,18 +260,55 @@ void TimelineComponent::paint (juce::Graphics& g)
             const auto base     = Skin::clipColour (skin.clipPalette, skin.audioClip,  row.track);
             const auto stripCol = Skin::clipColour (skin.clipPalette, skin.audioStrip, row.track);
 
-            g.setColour ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd);
-            g.fillRect (0, row.y, headerW, rowHeight);
             if (skin.tintLanes)                                   // Pro Tools: tint the whole lane its track colour
             { g.setColour (base.withAlpha (0.14f)); g.fillRect (headerW, row.y, w - headerW, rowHeight); }
-            g.setColour (stripCol);                               // track colour strip
-            g.fillRect (0, row.y, 3, rowHeight);
 
-            g.setColour (skin.text);
-            g.setFont (11.0f);
-            g.drawText (t->name, 12, row.y + 7, headerW - 70, 32, juce::Justification::centredLeft, true);
+            const bool selTrk = (row.group == selGroup && row.track == selTrack);
+            if (skin.logicHeaders)
+            {
+                g.setColour (selTrk ? juce::Colour (0xff828282) : ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd));
+                g.fillRect (0, row.y, headerW, rowHeight);
+                g.setColour (skin.windowBg.darker (0.2f));
+                g.fillRect (0, row.y + rowHeight - 1, headerW, 1);   // row separator
 
-            drawMS (g, row.y, t->mute, t->solo);
+                juce::Rectangle<float> icon (6.0f, (float) row.y + 6.0f, 26.0f, 26.0f);   // colour icon + waveform glyph
+                g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4f86d8), icon.getX(), icon.getY(),
+                                                         juce::Colour (0xff3162b4), icon.getX(), icon.getBottom(), false));
+                g.fillRoundedRectangle (icon, 4.0f);
+                g.setColour (juce::Colours::white.withAlpha (0.9f));
+                for (int k = 0; k < 5; ++k)
+                {
+                    const float bx = icon.getX() + 5.0f + (float) k * 4.0f;
+                    const float hh = (k % 2 ? 7.0f : 12.0f);
+                    g.fillRect (bx, icon.getCentreY() - hh / 2.0f, 2.0f, hh);
+                }
+
+                g.setColour (skin.text);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+                g.drawText (t->name, 38, row.y + 6, headerW - 44, 16, juce::Justification::centredLeft, true);
+
+                drawMS (g, row.y, t->mute, t->solo);
+
+                auto rb = rBox (row.y).toFloat();                   // record-enable
+                g.setColour (t->recordArm ? juce::Colour (0xffc8281a) : skin.control);
+                g.fillRoundedRectangle (rb, 3.0f);
+                g.setColour (t->recordArm ? juce::Colour (0xffc8281a).brighter (0.3f) : skin.control.brighter (0.2f));
+                g.drawRoundedRectangle (rb, 3.0f, 1.0f);
+                g.setColour (t->recordArm ? juce::Colours::white : juce::Colour (0xffa02316));
+                g.setFont (11.0f);
+                g.drawText ("R", rb.toNearestInt(), juce::Justification::centred, false);
+            }
+            else
+            {
+                g.setColour ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd);
+                g.fillRect (0, row.y, headerW, rowHeight);
+                g.setColour (stripCol);                            // track colour strip
+                g.fillRect (0, row.y, 3, rowHeight);
+                g.setColour (skin.text);
+                g.setFont (11.0f);
+                g.drawText (t->name, 12, row.y + 7, headerW - 70, 32, juce::Justification::centredLeft, true);
+                drawMS (g, row.y, t->mute, t->solo);
+            }
 
             for (int j = 0; j < (int) t->clips.size(); ++j)
             {
@@ -491,6 +541,7 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
         {
             if (mBox (hit->y).contains (e.getPosition())) { if (onTrackMute) onTrackMute (hit->group, hit->track); return; }
             if (sBox (hit->y).contains (e.getPosition())) { if (onTrackSolo) onTrackSolo (hit->group, hit->track); return; }
+            if (rBox (hit->y).contains (e.getPosition())) { if (onTrackRecord) onTrackRecord (hit->group, hit->track); return; }
             if (onActivateGroup) onActivateGroup (hit->group);
             if (onClipSelected)  onClipSelected (hit->group, hit->track, -1);
         }

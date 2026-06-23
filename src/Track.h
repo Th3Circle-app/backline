@@ -18,6 +18,7 @@ struct AudioTrack
     std::vector<AudioClip> clips;
     bool  mute = false;
     bool  solo = false;
+    bool  recordArm = false;           // record-enable (visual; recording is Phase C)
     float volume = 1.0f;               // channel fader, linear (0 .. ~1.4)
     float pan    = 0.0f;               // -1 = hard left .. +1 = hard right
     std::vector<double> beatMarkers;   // onset times within the source (seconds)

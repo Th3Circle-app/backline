@@ -178,6 +178,7 @@ public:
         timeline.onImportTrack   = [this] (int g) { importTrack (g); };
         timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
         timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
+        timeline.onTrackRecord   = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.recordArm = ! tr.recordArm; timeline.repaint(); } };
         timeline.onVideoMute     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoMute = ! groups[(size_t) g]->videoMute; applyMixGains(); timeline.repaint(); } };
         timeline.onVideoSolo     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoSolo = ! groups[(size_t) g]->videoSolo; applyMixGains(); timeline.repaint(); } };
         timeline.onActivateGroup = [this] (int g) { activateGroup (g); };
