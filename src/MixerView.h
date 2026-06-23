@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <cmath>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "Track.h"
 #include "AudioEngine.h"
@@ -21,7 +22,7 @@ struct ChannelStrip : public juce::Component
     juce::StringArray fxNames;   // cached insert names (paint must not lock the audio engine)
 
     juce::Slider fader, pan;
-    juce::TextButton mute { "M" }, solo { "S" }, fx { "Inserts" };
+    juce::TextButton mute { "M" }, solo { "S" };
     juce::Label name;
 
     std::function<void (float)> onFader, onPanChange;
@@ -31,19 +32,19 @@ struct ChannelStrip : public juce::Component
     explicit ChannelStrip (bool master) : isMaster (master)
     {
         name.setJustificationType (juce::Justification::centred);
-        name.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
+        name.setFont (juce::Font (juce::FontOptions().withHeight (10.5f)));
         addAndMakeVisible (name);
 
         fader.setSliderStyle (juce::Slider::LinearVertical);
         fader.setRange (0.0, 1.4, 0.001);
         fader.setDoubleClickReturnValue (true, 1.0);
         fader.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        fader.onValueChange = [this] { if (onFader) onFader ((float) fader.getValue()); };
+        fader.onValueChange = [this] { if (onFader) onFader ((float) fader.getValue()); repaint(); };
         addAndMakeVisible (fader);
 
         if (! master)
         {
-            pan.setSliderStyle (juce::Slider::LinearHorizontal);
+            pan.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
             pan.setRange (-1.0, 1.0, 0.01);
             pan.setDoubleClickReturnValue (true, 0.0);
             pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -54,8 +55,7 @@ struct ChannelStrip : public juce::Component
             mute.onClick = [this] { if (onMuteToggle) onMuteToggle (mute.getToggleState()); };
             solo.setClickingTogglesState (true);
             solo.onClick = [this] { if (onSoloToggle) onSoloToggle (solo.getToggleState()); };
-            fx.onClick    = [this] { if (onFxClick) onFxClick(); };
-            addAndMakeVisible (mute); addAndMakeVisible (solo); addAndMakeVisible (fx);
+            addAndMakeVisible (mute); addAndMakeVisible (solo);
         }
     }
 
@@ -66,32 +66,35 @@ struct ChannelStrip : public juce::Component
         repaint();
     }
 
-    void mouseDown (const juce::MouseEvent&) override { if (onSelectClick) onSelectClick(); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! isMaster && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }
+        if (onSelectClick) onSelectClick();
+    }
 
-    int fxNamesY = 0;
-    juce::Rectangle<int> meterBounds;
+    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox;
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (4);
-        name.setBounds (r.removeFromTop (16));
-        r.removeFromTop (4);
+        r.removeFromTop (5);                                // colour cap
+        name.setBounds (r.removeFromBottom (15));
         if (! isMaster)
         {
-            fx.setBounds (r.removeFromTop (18));
-            fxNamesY = r.getY();
-            r.removeFromTop (3 * 12 + 2);          // room for up to 3 insert names
-            pan.setBounds (r.removeFromTop (16));
-            r.removeFromTop (3);
-            auto ms = r.removeFromTop (20);
+            auto ms = r.removeFromBottom (18);
             mute.setBounds (ms.removeFromLeft (ms.getWidth() / 2 - 1));
             ms.removeFromLeft (2);
             solo.setBounds (ms);
-            r.removeFromTop (4);
+            r.removeFromBottom (4);
+
+            insertArea = r.removeFromTop (38); r.removeFromTop (3);
+            pan.setBounds (r.removeFromTop (26).withSizeKeepingCentre (26, 26)); r.removeFromTop (2);
+            valueBox = r.removeFromTop (14); r.removeFromTop (3);
         }
-        auto meterCol = r.removeFromRight (10);
-        meterBounds = meterCol.reduced (1);
-        r.removeFromRight (3);
+        meterBounds = r.removeFromRight (9);
+        r.removeFromRight (2);
+        tickArea = r.removeFromRight (16);
+        r.removeFromRight (2);
         fader.setBounds (r);
     }
 
@@ -100,30 +103,60 @@ struct ChannelStrip : public juce::Component
         auto r = getLocalBounds();
         g.setColour (skin.control.darker (0.25f));
         g.fillRoundedRectangle (r.toFloat().reduced (1.0f), 4.0f);
-        g.setColour (isMaster ? skin.accent : skin.audioStrip);     // colour cap
+        g.setColour (isMaster ? skin.accent : skin.audioStrip);      // colour cap
         g.fillRect (r.getX() + 3, r.getY() + 3, r.getWidth() - 6, 3);
 
-        if (! isMaster && ! fxNames.isEmpty())       // cached insert names (no locking in paint)
+        if (! isMaster && ! insertArea.isEmpty())                    // insert slots
         {
-            g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
-            for (int i = 0; i < juce::jmin (fxNames.size(), 3); ++i)
+            auto ia = insertArea;
+            for (int i = 0; i < 2; ++i)
             {
-                g.setColour (skin.text.withAlpha (0.85f));
-                g.drawText (fxNames[i], r.getX() + 5, fxNamesY + i * 12, r.getWidth() - 10, 11,
-                            juce::Justification::centredLeft, true);
+                auto slot = ia.removeFromTop (17).reduced (2, 1); ia.removeFromTop (1);
+                g.setColour (skin.control.brighter (0.04f));
+                g.fillRoundedRectangle (slot.toFloat(), 3.0f);
+                g.setColour (skin.windowBg.darker (0.2f));
+                g.drawRoundedRectangle (slot.toFloat(), 3.0f, 1.0f);
+                const juce::String label = (i < fxNames.size()) ? fxNames[i] : (i == 0 ? juce::String ("EQ") : juce::String());
+                g.setColour (label.isEmpty() ? skin.muted.withAlpha (0.5f) : skin.text);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+                g.drawText (label.isEmpty() ? juce::String ("-") : label, slot.reduced (5, 0), juce::Justification::centredLeft, true);
             }
         }
 
-        if (! meterBounds.isEmpty())                                // peak meter
+        if (! valueBox.isEmpty())                                    // dB value readout
         {
-            g.setColour (juce::Colours::black.withAlpha (0.5f));
+            g.setColour (juce::Colour (0xff2a2a2a));
+            g.fillRoundedRectangle (valueBox.toFloat(), 2.0f);
+            const double v  = fader.getValue();
+            const float  db = 20.0f * (float) std::log10 (juce::jmax (1.0e-4, v));
+            g.setColour (db > 0.05f ? juce::Colour (0xffe0b020) : skin.text);
+            g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::plain)));
+            g.drawText (juce::String (db, 1), valueBox, juce::Justification::centred, false);
+        }
+
+        if (! tickArea.isEmpty())                                    // dB scale beside the fader
+        {
+            g.setColour (skin.muted.withAlpha (0.65f));
+            g.setFont (juce::Font (juce::FontOptions().withHeight (7.5f)));
+            for (int m : { 0, 6, 12, 24, 48 })
+            {
+                const int y = tickArea.getY() + (int) (((float) m / 60.0f) * tickArea.getHeight());
+                g.drawText (juce::String (m), tickArea.getX(), y, tickArea.getWidth(), 9, juce::Justification::centredRight, false);
+            }
+        }
+
+        if (! meterBounds.isEmpty())                                 // segmented peak meter
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
             g.fillRect (meterBounds);
-            const int h = (int) (meterBounds.getHeight() * meter);
-            const juce::Colour mc = meter > 0.92f ? juce::Colours::red
-                                  : meter > 0.65f ? juce::Colours::orange
-                                                  : juce::Colour (0xff4ad07a);
-            g.setColour (mc);
-            g.fillRect (meterBounds.getX(), meterBounds.getBottom() - h, meterBounds.getWidth(), h);
+            const int segs = juce::jmax (1, meterBounds.getHeight() / 4);
+            const int lit  = (int) (meter * (float) segs);
+            for (int s = 0; s < lit; ++s)
+            {
+                const float f = (float) s / (float) segs;
+                g.setColour (f > 0.9f ? juce::Colours::red : f > 0.66f ? juce::Colour (0xffe0b020) : juce::Colour (0xff4ad07a));
+                g.fillRect (meterBounds.getX(), meterBounds.getBottom() - (s + 1) * 4 + 1, meterBounds.getWidth(), 3);
+            }
         }
     }
 };
