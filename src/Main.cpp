@@ -30,6 +30,35 @@ struct EditSnapshot
 };
 
 namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight, Undo, Redo }; }
+
+//==============================================================================
+/** A floating window that hosts one effect's editor (native generic UI or the
+    plugin's own UI). The processor owns the editor; this just frames it. */
+struct PluginWindow : public juce::DocumentWindow
+{
+    juce::AudioProcessor* proc = nullptr;
+    std::function<void()> onClose;
+
+    PluginWindow (juce::AudioProcessor* p, juce::Colour bg)
+        : juce::DocumentWindow (p->getName(), bg, juce::DocumentWindow::closeButton), proc (p)
+    {
+        setUsingNativeTitleBar (true);
+        if (auto* ed = p->createEditorIfNeeded())
+        {
+            setContentOwned (ed, true);          // editor dtor notifies the processor (editorBeingDeleted)
+            setResizable (ed->isResizable(), false);
+        }
+        else
+        {
+            setContentOwned (new juce::GenericAudioProcessorEditor (*p), true);
+            setResizable (true, false);
+        }
+        setTopLeftPosition (160, 140);
+        setVisible (true);
+    }
+
+    void closeButtonPressed() override { if (onClose) onClose(); }
+};
 enum class KeyProfile { Layback, Logic, ProTools, Ableton };
 
 class MainComponent : public juce::Component,
@@ -137,13 +166,17 @@ public:
         }
 
         startTimerHz (30);
+
+        loadPersistedPluginList();          // instant on subsequent launches
+        if (! pluginsScanned) startPluginScan();
     }
 
     ~MainComponent() override
     {
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
-        if (alive) *alive = false;   // in-flight ffmpeg worker callbacks bail instead of touching a dead window
+        if (alive) *alive = false;   // in-flight ffmpeg/scan worker callbacks bail instead of touching a dead window
+        closeAllPluginWindows();     // delete editors while their processors (in the engine) are still alive
         removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
         timeline.setGroups (nullptr);
@@ -837,6 +870,7 @@ private:
         clearHistory();
         auto& tr = groups[(size_t) g]->tracks[(size_t) t];
         if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
+        closePluginWindowsForTrack (tr->engineId);
         audioEngine.removeTrack (tr->engineId);
         groups[(size_t) g]->tracks.erase (groups[(size_t) g]->tracks.begin() + t);
         if (selGroup == g) { if (selTrack == t) { selTrack = -1; selClip = -1; } else if (selTrack > t) --selTrack; }
@@ -853,6 +887,7 @@ private:
         for (auto& tr : groups[(size_t) g]->tracks)
         {
             if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
+            closePluginWindowsForTrack (tr->engineId);
             audioEngine.removeTrack (tr->engineId);
         }
         groups.erase (groups.begin() + g);
@@ -888,12 +923,160 @@ private:
         timeline.repaint();
     }
 
+    //== effect-editor windows ==
+    void openPluginEditor (int engineId, int index)
+    {
+        auto* proc = audioEngine.trackPlugin (engineId, index);
+        if (proc == nullptr) return;
+        for (auto& w : pluginWindows) if (w->proc == proc) { w->toFront (true); return; }
+
+        auto win  = std::make_unique<PluginWindow> (proc, laf.skin.panel);
+        auto* raw = win.get();
+        auto a = alive;
+        win->onClose = [this, raw, a] { juce::MessageManager::callAsync ([this, raw, a] { if (a->load()) closePluginWindow (raw); }); };
+        pluginWindows.push_back (std::move (win));
+    }
+
+    void closePluginWindow (PluginWindow* w)
+    {
+        for (size_t i = 0; i < pluginWindows.size(); ++i)
+            if (pluginWindows[i].get() == w) { pluginWindows.erase (pluginWindows.begin() + (long) i); break; }
+    }
+
+    void closePluginWindowForProc (juce::AudioProcessor* proc)
+    {
+        for (size_t k = 0; k < pluginWindows.size(); )
+            if (pluginWindows[k]->proc == proc) pluginWindows.erase (pluginWindows.begin() + (long) k);
+            else ++k;
+    }
+
+    void closePluginWindowsForTrack (int engineId)
+    {
+        const int n = audioEngine.trackPluginCount (engineId);
+        for (int i = 0; i < n; ++i) closePluginWindowForProc (audioEngine.trackPlugin (engineId, i));
+    }
+
+    void closeAllPluginWindows() { pluginWindows.clear(); }
+
+    //== plugin scanning + persistence ==
+    juce::File pluginListFile() const
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Layback").getChildFile ("plugins.xml");
+    }
+
+    void persistPluginList()
+    {
+        const auto f = pluginListFile();
+        f.getParentDirectory().createDirectory();
+        if (auto xml = audioEngine.getKnownPlugins().createXml()) f.replaceWithText (xml->toString());
+    }
+
+    void loadPersistedPluginList()
+    {
+        if (auto xml = juce::parseXML (pluginListFile()))
+            audioEngine.getKnownPlugins().recreateFromXml (*xml);
+        pluginsScanned = audioEngine.getKnownPlugins().getNumTypes() > 0;
+    }
+
+    void startPluginScan()
+    {
+        if (scanning) return;
+        scanning = true;
+        titleLabel.setText ("Scanning audio plugins...", juce::dontSendNotification);
+        auto a = alive;
+        std::thread ([this, a]
+        {
+            juce::KnownPluginList local;
+            for (auto* fmt : audioEngine.getPluginFormats().getFormats())
+            {
+                if (! a->load()) return;
+                juce::PluginDirectoryScanner scanner (local, *fmt, fmt->getDefaultLocationsToSearch(), true, juce::File());
+                juce::String nm;
+                while (scanner.scanNextFile (true, nm)) { if (! a->load()) return; }
+            }
+            auto xml = local.createXml();
+            const juce::String xmlStr = xml ? xml->toString() : juce::String();
+            juce::MessageManager::callAsync ([this, a, xmlStr]
+            {
+                if (! a->load()) return;
+                if (auto x = juce::parseXML (xmlStr)) audioEngine.getKnownPlugins().recreateFromXml (*x);
+                persistPluginList();
+                scanning = false;
+                pluginsScanned = true;
+                titleLabel.setText ("Plugins ready (" + juce::String (audioEngine.getKnownPlugins().getNumTypes()) + " found)", juce::dontSendNotification);
+            });
+        }).detach();
+    }
+
     void showTrackMenu (int g, int t)
     {
         if (! validTrack (g, t)) return;
+        const int engineId = groups[(size_t) g]->tracks[(size_t) t]->engineId;
+
+        juce::PopupMenu insert;
+        insert.addItem (2001, "EQ (Layback)");
+        insert.addItem (2002, "Compressor (Layback)");
+        insert.addSeparator();
+
+        juce::PopupMenu hosted;
+        pluginMenuMap.clear();
+        int id = 3000;
+        for (const auto& d : audioEngine.getKnownPlugins().getTypes())
+        {
+            hosted.addItem (id, d.name + "  (" + d.pluginFormatName + ")");
+            pluginMenuMap[id] = d;
+            ++id;
+        }
+        if (pluginMenuMap.empty()) hosted.addItem (9, scanning ? "Scanning..." : "No plugins found", false, false);
+        insert.addSubMenu ("Audio Units / VST3", hosted);
+
         juce::PopupMenu m;
+        m.addSubMenu ("Insert effect", insert);
+
+        const int pc = audioEngine.trackPluginCount (engineId);
+        if (pc > 0)
+        {
+            juce::PopupMenu fx;
+            for (int i = 0; i < pc; ++i)
+            {
+                juce::PopupMenu one;
+                one.addItem (4000 + i * 2,     "Open editor");
+                one.addItem (4000 + i * 2 + 1, "Remove");
+                fx.addSubMenu (audioEngine.trackPluginName (engineId, i), one);
+            }
+            m.addSubMenu ("Effects (" + juce::String (pc) + ")", fx);
+        }
+
+        m.addSeparator();
+        m.addItem (5, scanning ? "Scanning plugins..." : "Rescan plugins", ! scanning);
         m.addItem (1, "Delete track");
-        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r) { if (r == 1) deleteTrack (g, t); restoreKeyFocus(); });
+
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t, engineId] (int r)
+        {
+            if      (r == 1)    deleteTrack (g, t);
+            else if (r == 5)    startPluginScan();
+            else if (r == 2001) audioEngine.addNativeEffect (engineId, 0);
+            else if (r == 2002) audioEngine.addNativeEffect (engineId, 1);
+            else if (r >= 3000 && r < 4000)
+            {
+                const auto it = pluginMenuMap.find (r);
+                if (it != pluginMenuMap.end())
+                {
+                    juce::String err;
+                    if (! audioEngine.addHostedPlugin (engineId, it->second, err))
+                        titleLabel.setText ("Plugin failed to load: " + err, juce::dontSendNotification);
+                }
+            }
+            else if (r >= 4000)
+            {
+                const int idx  = (r - 4000) / 2;
+                const bool open = ((r - 4000) % 2) == 0;
+                if (open) openPluginEditor (engineId, idx);
+                else { closePluginWindowForProc (audioEngine.trackPlugin (engineId, idx)); audioEngine.removeTrackPlugin (engineId, idx); }
+            }
+            restoreKeyFocus();
+        });
     }
 
     void showGroupMenu (int g)
@@ -1097,6 +1280,7 @@ private:
     void newProject()
     {
         pauseAll();
+        closeAllPluginWindows();   // their processors live in the engine tracks we're about to remove
         for (auto& g : groups)
             for (auto& t : g->tracks)
             { if (t->thumb) { t->thumb->removeChangeListener (this); t->thumb->setSource (nullptr); } audioEngine.removeTrack (t->engineId); }
@@ -1293,6 +1477,11 @@ private:
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> transportBand, viewerFrame;
+
+    std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
+    std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
+    bool scanning = false;
+    bool pluginsScanned = false;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;

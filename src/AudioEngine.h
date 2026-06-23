@@ -4,6 +4,7 @@
 #include <memory>
 #include <atomic>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 #include "Clip.h"
 
 //==============================================================================
@@ -33,6 +34,20 @@ public:
     void setTrackClips (int trackId, const std::vector<AudioClip>& clips);
     void setTrackGain  (int trackId, float gain);
 
+    //== Per-track effect chain (native built-ins + hosted AU/VST3 plugins) ==
+    juce::AudioPluginFormatManager& getPluginFormats() { return pluginFormats; }
+    juce::KnownPluginList&          getKnownPlugins()  { return knownPlugins;  }
+
+    /** Insert a built-in effect (0 = EQ, 1 = Compressor). */
+    void addNativeEffect (int trackId, int which);
+    /** Instantiate a scanned AU/VST3 plugin and insert it. Returns false + sets error on failure. */
+    bool addHostedPlugin (int trackId, const juce::PluginDescription& desc, juce::String& error);
+
+    int  trackPluginCount (int trackId);
+    juce::AudioProcessor* trackPlugin (int trackId, int index);   // raw ptr, valid until removed (message thread only)
+    juce::String trackPluginName (int trackId, int index);
+    void removeTrackPlugin (int trackId, int index);
+
     /** Ensures the transport runs at least this long (so the playhead keeps
         advancing over video-only regions with no audio). */
     void setMinLengthSeconds (double seconds);
@@ -58,12 +73,13 @@ private:
         juce::AudioBuffer<float> audio;     // at device rate
         std::vector<AudioClip>   clips;
         std::atomic<float>       gain { 1.0f };
+        std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
     };
 
     class Mixer : public juce::PositionableAudioSource
     {
     public:
-        void prepareToPlay (int, double sr) override { rate = sr; recomputeLength(); }
+        void prepareToPlay (int samplesPerBlock, double sr) override;
         void releaseResources() override {}
         void getNextAudioBlock (const juce::AudioSourceChannelInfo&) override;
 
@@ -73,6 +89,7 @@ private:
         bool isLooping() const override                    { return false; }
 
         void recomputeLength();
+        void ensureScratch (int channels, int samples);   // non-realtime only (prepare / offline render)
 
         juce::CriticalSection lock;
         std::vector<std::unique_ptr<TrackData>> tracks;
@@ -80,13 +97,19 @@ private:
         std::atomic<juce::int64> totalLen { 0 };
         double rate = 44100.0;
         double minLengthSeconds = 0.0;
+        juce::AudioBuffer<float> scratch;         // reused per-track render buffer (no realtime alloc)
+        int    preparedBlock = 512;
     };
 
     static juce::AudioBuffer<float> resampleBuffer (const juce::AudioBuffer<float>& in, double inRate, double outRate);
     TrackData* findTrack (int id);   // call under mixer.lock
+    void prepareProcessor (juce::AudioProcessor& p) const;
+    void addProcessorToTrack (int trackId, std::unique_ptr<juce::AudioProcessor> p);
 
     juce::AudioDeviceManager   deviceManager;
     juce::AudioFormatManager   formatManager;
+    juce::AudioPluginFormatManager pluginFormats;
+    juce::KnownPluginList      knownPlugins;
     juce::AudioSourcePlayer    sourcePlayer;
     juce::AudioTransportSource transport;
     Mixer  mixer;

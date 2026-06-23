@@ -23,6 +23,9 @@ target_sources(LaybackStation PRIVATE
 target_compile_definitions(LaybackStation PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_AU=1
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_LADSPA=0
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:LaybackStation,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:LaybackStation,JUCE_VERSION>")
 
@@ -30,10 +33,13 @@ target_link_libraries(LaybackStation
     PRIVATE
         juce::juce_gui_extra
         juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
         "-framework AVFoundation"
         "-framework CoreMedia"
         "-framework CoreVideo"
         "-framework QuartzCore"
+        "-framework CoreAudioKit"
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

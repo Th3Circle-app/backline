@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "FfmpegTool.h"
+#include "NativeEffects.h"
 #include <cmath>
 
 //==============================================================================
@@ -12,64 +13,110 @@ void AudioEngine::Mixer::recomputeLength()
     totalLen.store (len, std::memory_order_relaxed);
 }
 
+void AudioEngine::Mixer::prepareToPlay (int samplesPerBlock, double sr)
+{
+    rate = sr;
+    preparedBlock = juce::jmax (1, samplesPerBlock);
+    ensureScratch (2, preparedBlock);
+
+    const juce::ScopedLock sl (lock);
+    for (auto& t : tracks)
+        for (auto& p : t->chain)
+            if (p != nullptr)
+            {
+                p->setRateAndBufferSizeDetails (sr, preparedBlock);
+                p->prepareToPlay (sr, preparedBlock);
+            }
+    recomputeLength();
+}
+
+void AudioEngine::Mixer::ensureScratch (int channels, int samples)   // non-realtime only
+{
+    if (scratch.getNumChannels() < channels || scratch.getNumSamples() < samples)
+        scratch.setSize (juce::jmax (channels, scratch.getNumChannels()),
+                         juce::jmax (samples,  scratch.getNumSamples()), false, true, true);
+}
+
 void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
 {
     info.clearActiveBufferRegion();
 
     const juce::ScopedLock sl (lock);
-    const int numCh = info.buffer->getNumChannels();
+    const int numCh = juce::jmin (info.buffer->getNumChannels(), scratch.getNumChannels());
+    const int n     = info.numSamples;
     const juce::int64 blockStart = pos.load (std::memory_order_relaxed);
-    const int n = info.numSamples;
+    if (numCh <= 0 || n <= 0 || n > scratch.getNumSamples()) { pos.store (blockStart + n, std::memory_order_relaxed); return; }
 
     for (auto& tptr : tracks)
     {
         auto* t = tptr.get();
         const float g = t->gain.load();
-        if (g <= 0.0001f) continue;
+        const bool  hasFx = ! t->chain.empty();
+        if (g <= 0.0001f && ! hasFx) continue;
+
+        // 1) render this track's clips into the per-track scratch buffer (pre-fader, pre-FX)
+        for (int ch = 0; ch < numCh; ++ch) scratch.clear (ch, 0, n);
 
         const int tCh  = t->audio.getNumChannels();
         const int tLen = t->audio.getNumSamples();
-        if (tCh <= 0 || tLen <= 0) continue;
-
-        for (const auto& c : t->clips)
+        if (tCh > 0 && tLen > 0)
         {
-            const juce::int64 clipStart = (juce::int64) (c.timelineStart * rate);
-            const juce::int64 clipEnd   = (juce::int64) (c.timelineEnd()  * rate);
-            const juce::int64 ovStart = juce::jmax (clipStart, blockStart);
-            const juce::int64 ovEnd   = juce::jmin (clipEnd, blockStart + n);
-            if (ovEnd <= ovStart) continue;
-
-            const int   dest     = (int) (ovStart - blockStart) + info.startSample;
-            const juce::int64 srcStart = (juce::int64) (c.sourceIn * rate) + (ovStart - clipStart);
-            if (srcStart < 0) continue;
-
-            int count = (int) (ovEnd - ovStart);
-            if (srcStart + count > tLen) count = (int) (tLen - srcStart);
-            if (count <= 0) continue;
-
-            const juce::int64 clipLenS = clipEnd - clipStart;
-            const int fade = (int) juce::jmin ((juce::int64) (0.005 * rate), clipLenS / 2);   // 5 ms declick fade in/out
-
-            for (int ch = 0; ch < numCh; ++ch)
+            for (const auto& c : t->clips)
             {
-                const int sch = juce::jmin (ch, tCh - 1);
-                const float* sp = t->audio.getReadPointer (sch, (int) srcStart);
-                float* dp = info.buffer->getWritePointer (ch, dest);
+                const juce::int64 clipStart = (juce::int64) (c.timelineStart * rate);
+                const juce::int64 clipEnd   = (juce::int64) (c.timelineEnd()  * rate);
+                const juce::int64 ovStart = juce::jmax (clipStart, blockStart);
+                const juce::int64 ovEnd   = juce::jmin (clipEnd, blockStart + n);
+                if (ovEnd <= ovStart) continue;
 
-                for (int i = 0; i < count; ++i)
+                const int dest = (int) (ovStart - blockStart);
+                const juce::int64 srcStart = (juce::int64) (c.sourceIn * rate) + (ovStart - clipStart);
+                if (srcStart < 0) continue;
+
+                int count = (int) (ovEnd - ovStart);
+                if (srcStart + count > tLen) count = (int) (tLen - srcStart);
+                if (count <= 0) continue;
+
+                const juce::int64 clipLenS = clipEnd - clipStart;
+                const int fade = (int) juce::jmin ((juce::int64) (0.005 * rate), clipLenS / 2);   // 5 ms declick
+
+                for (int ch = 0; ch < numCh; ++ch)
                 {
-                    float fdf = 1.0f;
-                    if (fade > 0)
+                    const int sch = juce::jmin (ch, tCh - 1);
+                    const float* sp = t->audio.getReadPointer (sch, (int) srcStart);
+                    float* dp = scratch.getWritePointer (ch, dest);
+                    for (int i = 0; i < count; ++i)
                     {
-                        const juce::int64 cl = (ovStart - clipStart) + i;   // sample index within the clip
-                        if (cl < fade)                  fdf = (float) cl / (float) fade;
-                        else if (cl > clipLenS - fade)  fdf = (float) (clipLenS - cl) / (float) fade;
-                        fdf = juce::jlimit (0.0f, 1.0f, fdf);
+                        float fdf = 1.0f;
+                        if (fade > 0)
+                        {
+                            const juce::int64 cl = (ovStart - clipStart) + i;
+                            if (cl < fade)                 fdf = (float) cl / (float) fade;
+                            else if (cl > clipLenS - fade) fdf = (float) (clipLenS - cl) / (float) fade;
+                            fdf = juce::jlimit (0.0f, 1.0f, fdf);
+                        }
+                        dp[i] += sp[i] * fdf;
                     }
-                    dp[i] += sp[i] * g * fdf;
                 }
             }
         }
+
+        // 2) per-track insert FX chain (native built-ins + hosted plugins)
+        if (hasFx)
+        {
+            float* chans[32];
+            const int pc = juce::jmin (numCh, 32);
+            for (int ch = 0; ch < pc; ++ch) chans[ch] = scratch.getWritePointer (ch, 0);
+            juce::AudioBuffer<float> proxy (chans, pc, n);
+            juce::MidiBuffer midi;
+            for (auto& p : t->chain)
+                if (p != nullptr) p->processBlock (proxy, midi);
+        }
+
+        // 3) sum into the output at the post-FX channel gain (mute/solo)
+        if (g > 0.0001f)
+            for (int ch = 0; ch < numCh; ++ch)
+                info.buffer->addFrom (ch, info.startSample, scratch, ch, 0, n, g);
     }
 
     pos.store (blockStart + n, std::memory_order_relaxed);
@@ -82,6 +129,8 @@ AudioEngine::AudioEngine()
    #if JUCE_MAC
     formatManager.registerFormat (new juce::CoreAudioFormat(), false);
    #endif
+    juce::addDefaultFormatsToManager (pluginFormats);   // AU + VST3 hosting (new JUCE helper)
+    mixer.ensureScratch (2, mixer.preparedBlock);
 
     deviceManager.initialiseWithDefaultDevices (0, 2);
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -301,7 +350,7 @@ bool AudioEngine::renderMixToFile (const juce::File& outWav, double lengthSecond
     if (writer == nullptr) return false;
     os.release();                           // the writer owns the stream now
 
-    const int block = 4096;
+    const int block = juce::jmax (64, mixer.preparedBlock);   // match plugins' prepared block size
     juce::AudioBuffer<float> buf (2, block);
     const juce::int64 total = (juce::int64) (lengthSeconds * deviceRate);
     juce::int64 done = 0;
@@ -320,4 +369,78 @@ bool AudioEngine::renderMixToFile (const juce::File& outWav, double lengthSecond
     writer.reset();
     mixer.setNextReadPosition (savedPos);
     return done >= total;
+}
+
+//==============================================================================
+void AudioEngine::prepareProcessor (juce::AudioProcessor& p) const
+{
+    p.setPlayConfigDetails (2, 2, mixer.rate, mixer.preparedBlock);
+    p.prepareToPlay (mixer.rate, mixer.preparedBlock);
+}
+
+void AudioEngine::addProcessorToTrack (int trackId, std::unique_ptr<juce::AudioProcessor> p)
+{
+    if (p == nullptr) return;
+    prepareProcessor (*p);                       // prepared before it can be hit by the audio thread
+    {
+        const juce::ScopedLock sl (mixer.lock);
+        if (auto* t = findTrack (trackId)) t->chain.push_back (std::move (p));
+    }
+    // if the track wasn't found, p frees here (outside the lock)
+}
+
+void AudioEngine::addNativeEffect (int trackId, int which)
+{
+    std::unique_ptr<juce::AudioProcessor> p = (which == 0)
+        ? std::unique_ptr<juce::AudioProcessor> (std::make_unique<NativeEQ>())
+        : std::unique_ptr<juce::AudioProcessor> (std::make_unique<NativeCompressor>());
+    addProcessorToTrack (trackId, std::move (p));
+}
+
+bool AudioEngine::addHostedPlugin (int trackId, const juce::PluginDescription& desc, juce::String& error)
+{
+    auto inst = pluginFormats.createPluginInstance (desc, mixer.rate, mixer.preparedBlock, error);
+    if (inst == nullptr) return false;
+    addProcessorToTrack (trackId, std::move (inst));
+    return true;
+}
+
+int AudioEngine::trackPluginCount (int trackId)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId)) return (int) t->chain.size();
+    return 0;
+}
+
+juce::AudioProcessor* AudioEngine::trackPlugin (int trackId, int index)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId))
+        if (index >= 0 && index < (int) t->chain.size())
+            return t->chain[(size_t) index].get();
+    return nullptr;
+}
+
+juce::String AudioEngine::trackPluginName (int trackId, int index)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId))
+        if (index >= 0 && index < (int) t->chain.size())
+            return t->chain[(size_t) index]->getName();
+    return {};
+}
+
+void AudioEngine::removeTrackPlugin (int trackId, int index)
+{
+    std::unique_ptr<juce::AudioProcessor> doomed;   // freed outside the lock
+    {
+        const juce::ScopedLock sl (mixer.lock);
+        if (auto* t = findTrack (trackId))
+            if (index >= 0 && index < (int) t->chain.size())
+            {
+                doomed = std::move (t->chain[(size_t) index]);
+                t->chain.erase (t->chain.begin() + index);
+            }
+    }
+    if (doomed != nullptr) doomed->releaseResources();
 }
