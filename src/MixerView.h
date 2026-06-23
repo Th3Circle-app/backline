@@ -72,7 +72,7 @@ struct ChannelStrip : public juce::Component
         if (onSelectClick) onSelectClick();
     }
 
-    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox;
+    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, sendsRow, outputRow, autoRow;
 
     void resized() override
     {
@@ -88,8 +88,11 @@ struct ChannelStrip : public juce::Component
             r.removeFromBottom (4);
 
             insertArea = r.removeFromTop (38); r.removeFromTop (3);
-            pan.setBounds (r.removeFromTop (26).withSizeKeepingCentre (26, 26)); r.removeFromTop (2);
-            valueBox = r.removeFromTop (14); r.removeFromTop (3);
+            sendsRow   = r.removeFromTop (15); r.removeFromTop (2);
+            outputRow  = r.removeFromTop (15); r.removeFromTop (2);
+            autoRow    = r.removeFromTop (15); r.removeFromTop (3);
+            pan.setBounds (r.removeFromTop (24).withSizeKeepingCentre (24, 24)); r.removeFromTop (2);
+            valueBox = r.removeFromTop (13); r.removeFromTop (3);
         }
         meterBounds = r.removeFromRight (9);
         r.removeFromRight (2);
@@ -121,6 +124,22 @@ struct ChannelStrip : public juce::Component
                 g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
                 g.drawText (label.isEmpty() ? juce::String ("-") : label, slot.reduced (5, 0), juce::Justification::centredLeft, true);
             }
+
+            auto rowSlot = [&] (juce::Rectangle<int> b, const juce::String& t, juce::Colour txt)   // Logic strip rows
+            {
+                if (b.isEmpty()) return;
+                auto rf = b.toFloat().reduced (2.0f, 1.0f);
+                g.setColour (skin.control.brighter (0.04f));
+                g.fillRoundedRectangle (rf, 3.0f);
+                g.setColour (skin.windowBg.darker (0.2f));
+                g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+                g.setColour (txt);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+                g.drawText (t, b.reduced (6, 0), juce::Justification::centredLeft, true);
+            };
+            rowSlot (sendsRow,  "Sends",      skin.muted);
+            rowSlot (outputRow, "Stereo Out", skin.text);
+            rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f));
         }
 
         if (! valueBox.isEmpty())                                    // dB value readout

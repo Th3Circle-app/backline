@@ -58,7 +58,7 @@ struct Skin
                 s.audioClip = juce::Colour (0xff48474b); s.audioStrip = juce::Colour (0xff616161);
                 s.waveform = juce::Colour (0xff92befa); s.timecodeText = juce::Colour (0xffece7c9); s.timecodeBg = juce::Colour (0xff2b2a22);
                 s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.0f; s.layout = 1;
-                s.clipTitleBar = true; s.clipSelFill = juce::Colour (0xff476ea6); s.clipSelOutline = juce::Colour (0xfff7d648);
+                s.clipTitleBar = true; s.clipSelFill = juce::Colour (0xff476ea6); s.clipSelOutline = juce::Colour (0xffc8a03c);
                 s.playhead = juce::Colour (0xfffbec98); s.logicHeaders = true; s.barsRuler = true; break;
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms

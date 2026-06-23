@@ -178,8 +178,9 @@ void TimelineComponent::paint (juce::Graphics& g)
     if (tl > 0.0 && skin.barsRuler)
     {
         const double barLen = 2.0;                              // 120 BPM, 4/4 -> 1 bar = 2 s
-        const double pps    = pixelsPerSecond();
-        const int    every  = (pps * barLen < 26.0) ? 2 : 1;   // label every other bar when zoomed out
+        const int xEnd = (int) xForTime (tl);
+        g.setColour (juce::Colour (0xffb89c43));                // gold "used region" band over the ruler
+        g.fillRect (headerW, 0, juce::jmax (0, xEnd - headerW), rulerHeight);
         g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
         int bar = 0;
         for (double t = 0.0; t <= tl + 1.0e-6; t += barLen, ++bar)
@@ -187,17 +188,17 @@ void TimelineComponent::paint (juce::Graphics& g)
             const int x = (int) xForTime (t);
             g.setColour (skin.windowBg.brighter (0.05f));      // faint bar gridline down the lanes
             g.drawVerticalLine (x, (float) rulerHeight, (float) h);
-            g.setColour (skin.ruler.darker (0.45f));           // bar tick
+            g.setColour (juce::Colour (0xff6a5a1e));           // bar tick on the gold band
             g.drawVerticalLine (x, (float) (rulerHeight - 8), (float) rulerHeight);
             for (int bt = 1; bt < 4; ++bt)                     // beat ticks
             {
                 const int bx = (int) xForTime (t + barLen * bt / 4.0);
-                g.setColour (skin.ruler.darker (0.25f));
+                g.setColour (juce::Colour (0x55000000));
                 g.drawVerticalLine (bx, (float) (rulerHeight - 4), (float) rulerHeight);
             }
-            if (bar % every == 0)
+            if (bar % 2 == 0)                                  // label odd bars (1, 3, 5, ...) near-black on gold
             {
-                g.setColour (juce::Colour (0xffd2d2d2));
+                g.setColour (juce::Colour (0xff1c1c1c));
                 g.drawText (juce::String (bar + 1), x + 3, 2, 40, rulerHeight - 4, juce::Justification::centredLeft, false);
             }
         }
@@ -334,7 +335,7 @@ void TimelineComponent::paint (juce::Graphics& g)
                     g.setFont (10.5f);
                     g.drawText (tx, bx, juce::Justification::centred, false);
                 };
-                lbtn (mBox (row.y), "M", t->mute,      juce::Colour (0xffd8852e));   // mute = orange
+                lbtn (mBox (row.y), "M", t->mute,      juce::Colour (0xff4fb0e6));   // mute = cyan (Logic)
                 lbtn (sBox (row.y), "S", t->solo,      juce::Colour (0xffe6c84a));   // solo = yellow
                 lbtn (rBox (row.y), "R", t->recordArm, juce::Colour (0xffc8281a));   // record = red
                 lbtn ({ 118, row.y + rowHeight - 22, 18, 16 }, "I", false, juce::Colour (0xff9aa0a8));   // input (cosmetic)
@@ -399,9 +400,9 @@ void TimelineComponent::paint (juce::Graphics& g)
                 if (titled)
                 {
                     auto bar = r.withHeight (13.0f);
-                    g.setColour (fillCol.darker (0.45f).withAlpha (0.92f));
+                    g.setColour (fillCol.darker (sel ? 0.2f : 0.12f).withAlpha (0.95f));
                     g.fillRect (bar.withTrimmedTop (1.0f).reduced (1.0f, 0.0f));
-                    g.setColour ((sel ? juce::Colours::white : skin.waveform).withAlpha (0.95f));
+                    g.setColour (sel ? juce::Colours::white : juce::Colour (0xff8caae1));
                     g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f)));
                     g.drawText (t->name, bar.toNearestInt().reduced (5, 0), juce::Justification::centredLeft, true);
                     waveArea = r.withTrimmedTop (13.0f).reduced (3.0f, 2.0f);
