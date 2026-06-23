@@ -466,7 +466,7 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
     {
         if (e.getDistanceFromDragStart() > 3)
         {
-            movedDuringLoop = true;
+            if (! movedDuringLoop) { movedDuringLoop = true; if (onEditBegin) onEditBegin(); }
             const double cur = timeForX ((double) e.x);
             loopStart   = juce::jmin (loopAnchor, cur);
             loopEnd     = juce::jmax (loopAnchor, cur);
@@ -479,7 +479,7 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
 
     if (dragMode == Drag::Move || dragMode == Drag::TrimLeft || dragMode == Drag::TrimRight)
     {
-        draggedClip = true;
+        if (! draggedClip) { draggedClip = true; if (onEditBegin) onEditBegin(); }
         const double dt = (dragPps > 0.0) ? (double) (e.x - dragStartX) / dragPps : 0.0;
         AudioClip nc = dragStartClip;
 

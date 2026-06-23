@@ -19,7 +19,16 @@
 static juce::var doublesToVar (const std::vector<double>& v) { juce::var a; for (double d : v) a.append (d); return a; }
 static std::vector<double> varToDoubles (const juce::var& v) { std::vector<double> r; if (auto* arr = v.getArray()) for (auto& e : *arr) r.push_back ((double) e); return r; }
 
-namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight }; }
+struct EditSnapshot
+{
+    struct TrackS { bool mute = false, solo = false; std::vector<AudioClip> clips; };
+    struct GroupS { bool vMute = false, vSolo = false; std::vector<TrackS> tracks; };
+    std::vector<GroupS> groups;
+    bool loopEnabled = false; double loopStart = 0.0, loopEnd = 0.0;
+    int selGroup = -1, selTrack = -1, selClip = -1;
+};
+
+namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight, Undo, Redo }; }
 enum class KeyProfile { Layback, Logic, ProTools, Ableton };
 
 class MainComponent : public juce::Component,
@@ -66,6 +75,7 @@ public:
         timeline.onSeek          = [this] (double s) { seekAll (s); };
         timeline.onScrubStart    = [this] { isScrubbing = true;  wasPlaying = playing; pauseAll(); };
         timeline.onScrubEnd      = [this] { isScrubbing = false; if (wasPlaying) playAll(); };
+        timeline.onEditBegin     = [this] { pushUndo(); };
         timeline.onClipChanged   = [this] (int g, int t, int c, AudioClip nc) { clipChanged (g, t, c, nc); };
         timeline.onClipMenu      = [this] (int g, int t, int c, double tm) { showClipMenu (g, t, c, tm); };
         timeline.onClipSelected  = [this] (int g, int t, int c) { selGroup = g; selTrack = t; selClip = c; timeline.setSelection (g, t, c); };
@@ -147,6 +157,7 @@ public:
         grp->duration = dur;
         groups.push_back (std::move (grp));
         timeline.setGroups (&groups);
+        clearHistory();
         const int newIdx = (int) groups.size() - 1;
 
         if (activeGroup < 0) activateGroup (newIdx);
@@ -255,6 +266,7 @@ public:
             groups[(size_t) g]->videoMute = true;   // hear the candidate, not the baked-in audio
 
         selGroup = g; selTrack = (int) groups[(size_t) g]->tracks.size() - 1; selClip = 0;
+        clearHistory();
         applyMixGains();
         timeline.setSelection (selGroup, selTrack, selClip);
         resized();
@@ -391,6 +403,7 @@ private:
 
     void toggleLoop()
     {
+        pushUndo();
         loopEnabled = loopToggle.getToggleState();
         if (loopEnabled && loopEnd <= loopStart) { loopStart = 0.0; loopEnd = timelineLength(); }
         timeline.setLoop (loopEnabled, loopStart, loopEnd);
@@ -416,6 +429,7 @@ private:
             auto& c = cl[(size_t) j];
             if (tm > c.timelineStart + kMinClipSeconds && tm < c.timelineEnd() - kMinClipSeconds)
             {
+                pushUndo();
                 AudioClip a = c; a.duration = tm - c.timelineStart;
                 AudioClip b; b.timelineStart = tm; b.sourceIn = c.sourceIn + (tm - c.timelineStart); b.duration = c.timelineEnd() - tm;
                 cl[(size_t) j] = a;
@@ -433,6 +447,7 @@ private:
     {
         if (validClip (g, t, c))
         {
+            pushUndo();
             auto& cl = groups[(size_t) g]->tracks[(size_t) t]->clips;
             cl.erase (cl.begin() + c);
             pushActiveClips (g);
@@ -602,6 +617,7 @@ private:
     void setLoopRegion (double s, double e)
     {
         if (e <= s) return;
+        pushUndo();
         loopEnabled = true; loopStart = s; loopEnd = e;
         loopToggle.setToggleState (true, juce::dontSendNotification);
         timeline.setLoop (true, s, e);
@@ -609,6 +625,7 @@ private:
 
     void clearLoop()
     {
+        pushUndo();
         loopEnabled = false; loopStart = 0.0; loopEnd = 0.0;
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setLoop (false, 0.0, 0.0);
@@ -641,7 +658,7 @@ private:
     void getAllCommands (juce::Array<juce::CommandID>& c) override
     {
         const juce::CommandID ids[] = { LSCmd::TogglePlay, LSCmd::Split, LSCmd::DeleteClip, LSCmd::ToggleLoop,
-                                        LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight };
+                                        LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight, LSCmd::Undo, LSCmd::Redo };
         c.addArray (ids, juce::numElementsInArray (ids));
     }
 
@@ -656,6 +673,8 @@ private:
             case LSCmd::ToggleSnap: info.setInfo ("Toggle snap", "Enable/disable snapping", "Edit", 0); info.setTicked (snapToggle.getToggleState()); break;
             case LSCmd::NudgeLeft:  info.setInfo ("Nudge left", "Nudge selected clip earlier", "Edit", 0); break;
             case LSCmd::NudgeRight: info.setInfo ("Nudge right", "Nudge selected clip later", "Edit", 0); break;
+            case LSCmd::Undo:       info.setInfo ("Undo", "Undo the last edit", "Edit", 0); break;
+            case LSCmd::Redo:       info.setInfo ("Redo", "Redo the last undone edit", "Edit", 0); break;
             default: break;
         }
         info.setActive (true);
@@ -676,6 +695,8 @@ private:
             case LSCmd::ToggleSnap: snapToggle.setToggleState (! snapToggle.getToggleState(), juce::dontSendNotification); timeline.setSnapEnabled (snapToggle.getToggleState()); return true;
             case LSCmd::NudgeLeft:  nudgeSelected (-0.05); return true;
             case LSCmd::NudgeRight: nudgeSelected ( 0.05); return true;
+            case LSCmd::Undo: undo(); return true;
+            case LSCmd::Redo: redo(); return true;
             default: return false;
         }
     }
@@ -683,6 +704,7 @@ private:
     void nudgeSelected (double delta)
     {
         if (! validClip (selGroup, selTrack, selClip)) return;
+        pushUndo();
         AudioClip c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
         c.timelineStart = juce::jmax (0.0, c.timelineStart + delta);
         clipChanged (selGroup, selTrack, selClip, c);
@@ -707,6 +729,8 @@ private:
         km->addKeyPress (LSCmd::NudgeRight, juce::KeyPress (juce::KeyPress::rightKey));
 
         auto add = [&] (int cmd, const juce::String& desc) { const auto k = juce::KeyPress::createFromDescription (desc); if (k.isValid()) km->addKeyPress (cmd, k); };
+        add (LSCmd::Undo, "command + Z");
+        add (LSCmd::Redo, "command + shift + Z");
         switch (p)
         {
             case KeyProfile::Logic:    add (LSCmd::Split, "command + T"); add (LSCmd::ToggleLoop, "C");                   add (LSCmd::ToggleSnap, "command + shift + S"); break;
@@ -741,6 +765,7 @@ private:
     void deleteTrack (int g, int t)
     {
         if (! validTrack (g, t)) return;
+        clearHistory();
         auto& tr = groups[(size_t) g]->tracks[(size_t) t];
         if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
         audioEngine.removeTrack (tr->engineId);
@@ -755,6 +780,7 @@ private:
     void deleteGroup (int g)
     {
         if (! validGroup (g)) return;
+        clearHistory();
         for (auto& tr : groups[(size_t) g]->tracks)
         {
             if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
@@ -808,6 +834,68 @@ private:
         m.addItem (1, "Delete video");
         m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r) { if (r == 1) deleteGroup (g); restoreKeyFocus(); });
     }
+
+    //==========================================================================
+    // Undo / redo (snapshot of clip arrangement + mute/solo + loop within the current structure).
+    EditSnapshot captureSnapshot()
+    {
+        EditSnapshot s;
+        s.groups.reserve (groups.size());
+        for (auto& g : groups)
+        {
+            EditSnapshot::GroupS gs; gs.vMute = g->videoMute; gs.vSolo = g->videoSolo;
+            for (auto& t : g->tracks)
+            {
+                EditSnapshot::TrackS ts; ts.mute = t->mute; ts.solo = t->solo; ts.clips = t->clips;
+                gs.tracks.push_back (std::move (ts));
+            }
+            s.groups.push_back (std::move (gs));
+        }
+        s.loopEnabled = loopEnabled; s.loopStart = loopStart; s.loopEnd = loopEnd;
+        s.selGroup = selGroup; s.selTrack = selTrack; s.selClip = selClip;
+        return s;
+    }
+
+    void restoreSnapshot (const EditSnapshot& s)
+    {
+        if (s.groups.size() != groups.size()) return;   // structure changed -> can't apply (history is cleared on such changes)
+        for (size_t gi = 0; gi < groups.size(); ++gi)
+            if (s.groups[gi].tracks.size() != groups[gi]->tracks.size()) return;
+
+        for (size_t gi = 0; gi < groups.size(); ++gi)
+        {
+            auto& g = groups[gi]; const auto& gs = s.groups[gi];
+            g->videoMute = gs.vMute; g->videoSolo = gs.vSolo;
+            for (size_t ti = 0; ti < g->tracks.size(); ++ti)
+            {
+                g->tracks[ti]->mute  = gs.tracks[ti].mute;
+                g->tracks[ti]->solo  = gs.tracks[ti].solo;
+                g->tracks[ti]->clips = gs.tracks[ti].clips;
+            }
+        }
+        loopEnabled = s.loopEnabled; loopStart = s.loopStart; loopEnd = s.loopEnd;
+        selGroup = s.selGroup; selTrack = s.selTrack; selClip = s.selClip;
+
+        if (activeGroup >= 0 && activeGroup < (int) groups.size())
+            for (auto& t : groups[(size_t) activeGroup]->tracks)
+                audioEngine.setTrackClips (t->engineId, t->clips);
+        applyMixGains();
+        loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
+        timeline.setLoop (loopEnabled, loopStart, loopEnd);
+        timeline.setSelection (selGroup, selTrack, selClip);
+        timeline.repaint();
+    }
+
+    void pushUndo()
+    {
+        undoStack.push_back (captureSnapshot());
+        if (undoStack.size() > 200) undoStack.erase (undoStack.begin());
+        redoStack.clear();
+    }
+
+    void clearHistory() { undoStack.clear(); redoStack.clear(); }
+    void undo() { if (undoStack.empty()) return; redoStack.push_back (captureSnapshot()); auto s = undoStack.back(); undoStack.pop_back(); restoreSnapshot (s); }
+    void redo() { if (redoStack.empty()) return; undoStack.push_back (captureSnapshot()); auto s = redoStack.back(); redoStack.pop_back(); restoreSnapshot (s); }
 
     void parentHierarchyChanged() override { if (isShowing()) grabKeyboardFocus(); }
     void restoreKeyFocus() { if (isShowing()) grabKeyboardFocus(); }   // reclaim focus after a menu/dialog so shortcuts keep working
@@ -939,6 +1027,7 @@ private:
         timeline.setGroups (&groups);
         activeGroup = -1; selGroup = selTrack = selClip = -1;
         playhead = 0.0; reachedEnd = false; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
+        clearHistory();
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
         titleLabel.setText ("Layback Station", juce::dontSendNotification);
@@ -1139,6 +1228,7 @@ private:
     bool   loopEnabled = false;
     double loopStart   = 0.0, loopEnd = 0.0;
 
+    std::vector<EditSnapshot> undoStack, redoStack;
     std::shared_ptr<std::atomic<bool>> alive { std::make_shared<std::atomic<bool>> (true) };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

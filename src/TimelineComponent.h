@@ -33,6 +33,7 @@ public:
     std::function<void (double)> onSeek;
     std::function<void()>        onScrubStart;
     std::function<void()>        onScrubEnd;
+    std::function<void()>        onEditBegin;     // fired once when a clip/loop drag actually starts changing (for undo)
     std::function<void (int, int, int, AudioClip)> onClipChanged;   // group, track, clip, value
     std::function<void (int, int, int, double)>    onClipMenu;      // group, track, clip, time
     std::function<void (int, int, int)>            onClipSelected;  // group, track, clip
