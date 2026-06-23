@@ -356,9 +356,18 @@ void TimelineComponent::mouseMove (const juce::MouseEvent& e)
 
 void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu())   // right-click / ctrl-click -> loop menu
+    if (e.mods.isPopupMenu())   // right-click / ctrl-click
     {
-        if (e.x >= headerW && onLoopMenu) onLoopMenu (timeForX ((double) e.x));
+        if (e.x >= headerW) { if (onLoopMenu) onLoopMenu (timeForX ((double) e.x)); return; }
+
+        const auto rows = buildRows();   // header column -> track/video context menu
+        for (const auto& row : rows)
+            if (e.y >= row.y && e.y < row.y + row.h)
+            {
+                if (row.kind == Row::Audio && onTrackMenu) onTrackMenu (row.group, row.track);
+                else if (row.kind == Row::Video && onGroupMenu) onGroupMenu (row.group);
+                break;
+            }
         return;
     }
 

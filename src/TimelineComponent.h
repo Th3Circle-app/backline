@@ -45,7 +45,9 @@ public:
     std::function<void (int)>                      onActivateGroup; // group
     std::function<void()>                          onAddVideo;
     std::function<void (bool, double, double)>      onLoopChanged;
-    std::function<void (double)>                    onLoopMenu;      // right-click: timeline time (seconds)
+    std::function<void (double)>                    onLoopMenu;      // right-click lane: timeline time (seconds)
+    std::function<void (int, int)>                  onTrackMenu;     // right-click an audio track header (group, track)
+    std::function<void (int)>                       onGroupMenu;     // right-click a video header (group)
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;

@@ -15,9 +15,13 @@
 // audio tracks). One group is "active": its video previews and its audio plays.
 // The audio engine holds every track's audio in RAM; only the active group's
 // tracks carry clips (others are silent), so switching groups is instant.
+namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight }; }
+enum class KeyProfile { Layback, Logic, ProTools, Ableton };
+
 class MainComponent : public juce::Component,
                       private juce::Timer,
-                      private juce::ChangeListener
+                      private juce::ChangeListener,
+                      public juce::ApplicationCommandTarget
 {
 public:
     MainComponent()
@@ -75,10 +79,23 @@ public:
             loopToggle.setToggleState (en, juce::dontSendNotification);
         };
         timeline.onLoopMenu      = [this] (double t) { showLoopMenu (t); };
+        timeline.onTrackMenu     = [this] (int g, int t) { showTrackMenu (g, t); };
+        timeline.onGroupMenu     = [this] (int g) { showGroupMenu (g); };
         timeline.setGroups (&groups);
         timelineViewport.setViewedComponent (&timeline, false);
         timelineViewport.setScrollBarsShown (true, false);
         addAndMakeVisible (timelineViewport);
+
+        keysButton.onClick = [this] { showKeysMenu(); };
+        addAndMakeVisible (keysButton);
+
+        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &loopToggle, &snapToggle })
+            c->setWantsKeyboardFocus (false);
+
+        commandManager.registerAllCommandsForTarget (this);
+        addKeyListener (commandManager.getKeyMappings());
+        setWantsKeyboardFocus (true);
+        applyKeyProfile (KeyProfile::Layback);
 
         setSize (1120, 820);
 
@@ -256,6 +273,8 @@ public:
         loopToggle.setBounds (controls.removeFromLeft (66));
         controls.removeFromLeft (10);
         snapToggle.setBounds (controls.removeFromLeft (62));
+        controls.removeFromLeft (10);
+        keysButton.setBounds (controls.removeFromLeft (118));
         controls.removeFromLeft (10);
         exportButton.setBounds (controls.removeFromLeft (90));
         timeLabel.setBounds  (controls.removeFromRight (150));
@@ -598,6 +617,166 @@ private:
             });
     }
 
+    //==========================================================================
+    // Command system + per-DAW keymap profiles.
+    juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
+
+    void getAllCommands (juce::Array<juce::CommandID>& c) override
+    {
+        const juce::CommandID ids[] = { LSCmd::TogglePlay, LSCmd::Split, LSCmd::DeleteClip, LSCmd::ToggleLoop,
+                                        LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight };
+        c.addArray (ids, juce::numElementsInArray (ids));
+    }
+
+    void getCommandInfo (juce::CommandID id, juce::ApplicationCommandInfo& info) override
+    {
+        switch (id)
+        {
+            case LSCmd::TogglePlay: info.setInfo ("Play/Pause", "Toggle playback", "Transport", 0); break;
+            case LSCmd::Split:      info.setInfo ("Split at playhead", "Split the selected clip", "Edit", 0); break;
+            case LSCmd::DeleteClip: info.setInfo ("Delete clip", "Delete the selected clip", "Edit", 0); break;
+            case LSCmd::ToggleLoop: info.setInfo ("Toggle loop", "Enable/disable cycle", "Transport", 0); info.setTicked (loopEnabled); break;
+            case LSCmd::ToggleSnap: info.setInfo ("Toggle snap", "Enable/disable snapping", "Edit", 0); info.setTicked (snapToggle.getToggleState()); break;
+            case LSCmd::NudgeLeft:  info.setInfo ("Nudge left", "Nudge selected clip earlier", "Edit", 0); break;
+            case LSCmd::NudgeRight: info.setInfo ("Nudge right", "Nudge selected clip later", "Edit", 0); break;
+            default: break;
+        }
+        info.setActive (true);
+    }
+
+    bool perform (const InvocationInfo& info) override
+    {
+        switch (info.commandID)
+        {
+            case LSCmd::TogglePlay: togglePlay(); return true;
+            case LSCmd::Split:      if (validTrack (selGroup, selTrack)) splitTrackClip (selGroup, selTrack, playhead); return true;
+            case LSCmd::DeleteClip: if (validClip (selGroup, selTrack, selClip)) deleteClip (selGroup, selTrack, selClip); return true;
+            case LSCmd::ToggleLoop: loopToggle.setToggleState (! loopToggle.getToggleState(), juce::dontSendNotification); toggleLoop(); return true;
+            case LSCmd::ToggleSnap: snapToggle.setToggleState (! snapToggle.getToggleState(), juce::dontSendNotification); timeline.setSnapEnabled (snapToggle.getToggleState()); return true;
+            case LSCmd::NudgeLeft:  nudgeSelected (-0.05); return true;
+            case LSCmd::NudgeRight: nudgeSelected ( 0.05); return true;
+            default: return false;
+        }
+    }
+
+    void nudgeSelected (double delta)
+    {
+        if (! validClip (selGroup, selTrack, selClip)) return;
+        AudioClip c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        c.timelineStart = juce::jmax (0.0, c.timelineStart + delta);
+        clipChanged (selGroup, selTrack, selClip, c);
+    }
+
+    static juce::String profileName (KeyProfile p)
+    {
+        switch (p) { case KeyProfile::Logic: return "Logic"; case KeyProfile::ProTools: return "Pro Tools";
+                     case KeyProfile::Ableton: return "Ableton"; default: return "Layback"; }
+    }
+
+    void applyKeyProfile (KeyProfile p)
+    {
+        keyProfile = p;
+        auto* km = commandManager.getKeyMappings();
+        km->clearAllKeyPresses();
+
+        km->addKeyPress (LSCmd::TogglePlay, juce::KeyPress (juce::KeyPress::spaceKey));
+        km->addKeyPress (LSCmd::DeleteClip, juce::KeyPress (juce::KeyPress::deleteKey));
+        km->addKeyPress (LSCmd::DeleteClip, juce::KeyPress (juce::KeyPress::backspaceKey));
+        km->addKeyPress (LSCmd::NudgeLeft,  juce::KeyPress (juce::KeyPress::leftKey));
+        km->addKeyPress (LSCmd::NudgeRight, juce::KeyPress (juce::KeyPress::rightKey));
+
+        auto add = [&] (int cmd, const juce::String& desc) { const auto k = juce::KeyPress::createFromDescription (desc); if (k.isValid()) km->addKeyPress (cmd, k); };
+        switch (p)
+        {
+            case KeyProfile::Logic:    add (LSCmd::Split, "command + T"); add (LSCmd::ToggleLoop, "C");                   add (LSCmd::ToggleSnap, "command + shift + S"); break;
+            case KeyProfile::ProTools: add (LSCmd::Split, "command + E"); add (LSCmd::ToggleLoop, "command + shift + L"); add (LSCmd::ToggleSnap, "command + shift + S"); break;
+            case KeyProfile::Ableton:  add (LSCmd::Split, "command + E"); add (LSCmd::ToggleLoop, "command + L");         add (LSCmd::ToggleSnap, "command + shift + S"); break;
+            default:                   add (LSCmd::Split, "S");           add (LSCmd::ToggleLoop, "L");                   add (LSCmd::ToggleSnap, "N"); break;
+        }
+        keysButton.setButtonText ("Keys: " + profileName (p));
+        grabKeyboardFocus();
+    }
+
+    void showKeysMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Layback Station", true, keyProfile == KeyProfile::Layback);
+        m.addItem (2, "Logic",          true, keyProfile == KeyProfile::Logic);
+        m.addItem (3, "Pro Tools",      true, keyProfile == KeyProfile::ProTools);
+        m.addItem (4, "Ableton Live",   true, keyProfile == KeyProfile::Ableton);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&keysButton),
+            [this] (int r)
+            {
+                if      (r == 1) applyKeyProfile (KeyProfile::Layback);
+                else if (r == 2) applyKeyProfile (KeyProfile::Logic);
+                else if (r == 3) applyKeyProfile (KeyProfile::ProTools);
+                else if (r == 4) applyKeyProfile (KeyProfile::Ableton);
+            });
+    }
+
+    //==========================================================================
+    // Delete track / video.
+    void deleteTrack (int g, int t)
+    {
+        if (! validTrack (g, t)) return;
+        auto& tr = groups[(size_t) g]->tracks[(size_t) t];
+        if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
+        audioEngine.removeTrack (tr->engineId);
+        groups[(size_t) g]->tracks.erase (groups[(size_t) g]->tracks.begin() + t);
+        if (selGroup == g) { if (selTrack == t) { selTrack = -1; selClip = -1; } else if (selTrack > t) --selTrack; }
+        applyMixGains();
+        timeline.setSelection (selGroup, selTrack, selClip);
+        resized();
+        timeline.repaint();
+    }
+
+    void deleteGroup (int g)
+    {
+        if (! validGroup (g)) return;
+        for (auto& tr : groups[(size_t) g]->tracks)
+        {
+            if (tr->thumb != nullptr) { tr->thumb->removeChangeListener (this); tr->thumb->setSource (nullptr); }
+            audioEngine.removeTrack (tr->engineId);
+        }
+        groups.erase (groups.begin() + g);
+        timeline.setGroups (&groups);
+
+        if (groups.empty())
+        {
+            pauseAll();
+            activeGroup = -1; selGroup = selTrack = selClip = -1;
+            timeline.setActiveGroup (-1);
+            timeline.setSelection (-1, -1, -1);
+        }
+        else
+        {
+            const int na = (g == activeGroup) ? juce::jmin (g, (int) groups.size() - 1)
+                                              : (activeGroup > g ? activeGroup - 1 : activeGroup);
+            activeGroup = -1;            // force a full reload
+            activateGroup (juce::jlimit (0, (int) groups.size() - 1, na));
+        }
+        resized();
+        timeline.repaint();
+    }
+
+    void showTrackMenu (int g, int t)
+    {
+        if (! validTrack (g, t)) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Delete track");
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r) { if (r == 1) deleteTrack (g, t); });
+    }
+
+    void showGroupMenu (int g)
+    {
+        if (! validGroup (g)) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Delete video");
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r) { if (r == 1) deleteGroup (g); });
+    }
+
+    void parentHierarchyChanged() override { if (isShowing()) grabKeyboardFocus(); }
+
     void changeListenerCallback (juce::ChangeBroadcaster*) override { timeline.repaint(); }
 
     void timerCallback() override
@@ -671,8 +850,10 @@ private:
     TimelineComponent timeline;
     juce::Viewport timelineViewport;
 
-    juce::TextButton openButton, playButton, exportButton;
+    juce::TextButton openButton, playButton, exportButton, keysButton;
     juce::ToggleButton loopToggle, snapToggle;
+    juce::ApplicationCommandManager commandManager;
+    KeyProfile keyProfile = KeyProfile::Layback;
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
 
