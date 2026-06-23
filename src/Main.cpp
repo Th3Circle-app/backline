@@ -187,6 +187,7 @@ public:
     void activateGroup (int g)
     {
         if (! validGroup (g)) return;
+        clearHistory();   // a group switch is an undo-history boundary (snapshots are per active-group structure)
         pauseAll();
         activeGroup = g;
         playhead = 0.0;
@@ -879,10 +880,18 @@ private:
         if (activeGroup >= 0 && activeGroup < (int) groups.size())
             for (auto& t : groups[(size_t) activeGroup]->tracks)
                 audioEngine.setTrackClips (t->engineId, t->clips);
+
+        const double tl = timelineLength();                       // clamp restored loop/playhead to the current arrangement
+        if (loopEnd > tl) loopEnd = tl;
+        if (loopStart >= loopEnd) { loopEnabled = false; loopStart = 0.0; loopEnd = 0.0; }
+        playhead = juce::jlimit (0.0, juce::jmax (0.0, tl), playhead);
+        audioEngine.setPositionSeconds (playhead);
+
         applyMixGains();
         loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
         timeline.setLoop (loopEnabled, loopStart, loopEnd);
         timeline.setSelection (selGroup, selTrack, selClip);
+        timeline.setPlayhead (playhead);
         timeline.repaint();
     }
 
