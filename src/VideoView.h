@@ -40,6 +40,9 @@ public:
     /** Mutes/unmutes the video's own (baked-in) audio track. */
     void setMuted (bool shouldBeMuted);
 
+    /** Peak level (0..1) of the video's audio from the last processed block, for metering. */
+    float getAudioPeak() const;
+
     void resized() override;
 
 private:

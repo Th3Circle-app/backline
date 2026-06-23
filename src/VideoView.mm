@@ -1,8 +1,11 @@
 #include "VideoView.h"
+#include <atomic>
+#include <cmath>
 
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <AppKit/AppKit.h>
+#import <MediaToolbox/MediaToolbox.h>
 
 //==============================================================================
 // Non-ARC Objective-C++ (matches JUCE's macOS layer). Manual retain/release.
@@ -11,8 +14,59 @@ struct VideoViewImpl
     NSView*         view        = nil;   // layer-backed container view
     AVPlayer*       player      = nil;
     AVPlayerLayer*  playerLayer = nil;
+    std::atomic<float> videoPeak { 0.0f };   // last block's peak from the audio tap (for the master meter)
     std::unique_ptr<juce::NSViewComponent> nsViewComp;
 };
+
+//==============================================================================
+// MTAudioProcessingTap: measure the video's audio peak into VideoViewImpl::videoPeak.
+static void tapInit (MTAudioProcessingTapRef, void* clientInfo, void** storageOut) { *storageOut = clientInfo; }
+static void tapFinalize (MTAudioProcessingTapRef) {}
+static void tapPrepare (MTAudioProcessingTapRef, CMItemCount, const AudioStreamBasicDescription*) {}
+static void tapUnprepare (MTAudioProcessingTapRef) {}
+static void tapProcess (MTAudioProcessingTapRef tap, CMItemCount numberFrames, MTAudioProcessingTapFlags /*flags*/,
+                        AudioBufferList* bufferListInOut, CMItemCount* numberFramesOut, MTAudioProcessingTapFlags* flagsOut)
+{
+    if (MTAudioProcessingTapGetSourceAudio (tap, numberFrames, bufferListInOut, flagsOut, nullptr, numberFramesOut) != noErr)
+        return;
+    auto* peak = static_cast<std::atomic<float>*> (MTAudioProcessingTapGetStorage (tap));
+    if (peak == nullptr) return;
+    float mx = 0.0f;
+    for (UInt32 b = 0; b < bufferListInOut->mNumberBuffers; ++b)
+    {
+        const float* d = static_cast<const float*> (bufferListInOut->mBuffers[b].mData);
+        if (d == nullptr) continue;
+        const UInt32 n = bufferListInOut->mBuffers[b].mDataByteSize / sizeof (float);
+        for (UInt32 k = 0; k < n; ++k) { const float a = std::fabs (d[k]); if (a > mx) mx = a; }
+    }
+    peak->store (mx);
+}
+
+static void attachAudioTap (AVPlayerItem* item, AVURLAsset* asset, void* peakStorage)
+{
+    NSArray<AVAssetTrack*>* atracks = [asset tracksWithMediaType: AVMediaTypeAudio];
+    if (atracks.count == 0) return;
+
+    MTAudioProcessingTapCallbacks cb;
+    cb.version    = kMTAudioProcessingTapCallbacksVersion_0;
+    cb.clientInfo = peakStorage;
+    cb.init       = tapInit;
+    cb.finalize   = tapFinalize;
+    cb.prepare    = tapPrepare;
+    cb.unprepare  = tapUnprepare;
+    cb.process    = tapProcess;
+
+    MTAudioProcessingTapRef tap = NULL;
+    if (MTAudioProcessingTapCreate (kCFAllocatorDefault, &cb, kMTAudioProcessingTapCreationFlag_PostEffects, &tap) != noErr || tap == NULL)
+        return;
+
+    AVMutableAudioMixInputParameters* params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack: atracks.firstObject];
+    params.audioTapProcessor = tap;
+    AVMutableAudioMix* mix = [AVMutableAudioMix audioMix];
+    mix.inputParameters = @[ params ];
+    item.audioMix = mix;
+    CFRelease (tap);   // retained by params
+}
 
 //==============================================================================
 VideoView::VideoView()
@@ -60,7 +114,10 @@ bool VideoView::loadFile (const juce::File& file)
     if (url == nil)
         return false;
 
-    AVPlayer* player = [[AVPlayer alloc] initWithURL: url];               // owned (alloc)
+    AVURLAsset* asset = [AVURLAsset URLAssetWithURL: url options: @{ AVURLAssetPreferPreciseDurationAndTimingKey : @YES }];
+    AVPlayerItem* item = [AVPlayerItem playerItemWithAsset: asset];
+    attachAudioTap (item, asset, &i->videoPeak);                          // meter the video's own audio
+    AVPlayer* player = [[AVPlayer alloc] initWithPlayerItem: item];       // owned (alloc)
     player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
 
     AVPlayerLayer* layer = [[AVPlayerLayer playerLayerWithPlayer: player] retain];  // owned (retain)
@@ -90,7 +147,16 @@ void VideoView::pause()
 {
     auto* i = static_cast<VideoViewImpl*> (impl);
     if (i != nullptr && i->player != nil)
+    {
         [i->player pause];
+        i->videoPeak.store (0.0f);   // let the meter fall when stopped
+    }
+}
+
+float VideoView::getAudioPeak() const
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    return i != nullptr ? i->videoPeak.load() : 0.0f;
 }
 
 bool VideoView::isPlaying() const

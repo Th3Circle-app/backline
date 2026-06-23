@@ -40,6 +40,7 @@ target_link_libraries(LaybackStation
         "-framework CoreVideo"
         "-framework QuartzCore"
         "-framework CoreAudioKit"
+        "-framework MediaToolbox"
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

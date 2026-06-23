@@ -36,6 +36,7 @@ public:
     void setTrackPan   (int trackId, float pan);    // -1..+1
     void  setMasterGain (float g);
     float getMasterGain() const;
+    void  setExternalPeak (float v);                // fold in non-engine audio (e.g. the video) for the full-mix meter
     float getTrackPeak  (int trackId);              // last block's post-fader peak (0..1+), for meters
     float getMasterPeak() const;
 
@@ -108,6 +109,7 @@ private:
         std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
         std::atomic<float> masterGain { 1.0f };
         std::atomic<float> masterPeak { 0.0f };
+        std::atomic<float> externalPeak { 0.0f };   // video (non-engine) audio peak, folded into the full-mix meter
     };
 
     static juce::AudioBuffer<float> resampleBuffer (const juce::AudioBuffer<float>& in, double inRate, double outRate);

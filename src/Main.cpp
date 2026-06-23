@@ -656,12 +656,13 @@ private:
                     audioEngine.setTrackGain (t->engineId, 0.0f);
 
         auto* ag = activeGroupPtr();
-        if (ag == nullptr) { video.setMuted (true); return; }
+        if (ag == nullptr) { video.setMuted (true); videoAudible = false; return; }
 
         bool anySolo = ag->videoSolo;
         for (auto& t : ag->tracks) if (t->solo) anySolo = true;
 
-        video.setMuted (! (! ag->videoMute && (! anySolo || ag->videoSolo)));
+        videoAudible = (! ag->videoMute && (! anySolo || ag->videoSolo));
+        video.setMuted (! videoAudible);
         for (auto& t : ag->tracks)
         {
             const bool aud = ! t->mute && (! anySolo || t->solo);
@@ -1888,6 +1889,7 @@ private:
 
         timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
         logicBar.setPosition (formatTime (playhead), formatTime (timelineLength()));
+        audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix meter incl. video
         logicBar.setMasterLevel (audioEngine.getMasterPeak());
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
@@ -1923,6 +1925,7 @@ private:
 
     std::unique_ptr<VideoWindow> videoWindow;   // destroyed in ~MainComponent before `video`
     bool videoWindowOpen = false;
+    bool videoAudible = false;                  // is the video's audio currently in the mix (for the full-mix meter)
     std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;

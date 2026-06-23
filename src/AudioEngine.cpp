@@ -320,7 +320,8 @@ void AudioEngine::setTrackPan (int trackId, float pan)
 
 void  AudioEngine::setMasterGain (float g)    { mixer.masterGain.store (juce::jmax (0.0f, g)); }
 float AudioEngine::getMasterGain() const      { return mixer.masterGain.load(); }
-float AudioEngine::getMasterPeak() const      { return mixer.masterPeak.load(); }
+void  AudioEngine::setExternalPeak (float v)  { mixer.externalPeak.store (juce::jmax (0.0f, v)); }
+float AudioEngine::getMasterPeak() const      { return juce::jmax (mixer.masterPeak.load(), mixer.externalPeak.load()); }
 
 float AudioEngine::getTrackPeak (int trackId)
 {
