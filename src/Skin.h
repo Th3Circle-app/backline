@@ -15,9 +15,27 @@ struct Skin
     int       buttonLook = 0;        // 0 glossy(Layback) 1 metallic(Logic) 2 beveled(ProTools) 3 flat(Ableton)
     float     buttonRadius = 5.0f;
     int       layout = 0;            // 0 default (viewer-top), 1 Logic (top control bar + docked movie)
+    int       clipPalette = 0;       // region colours: 0 uniform(audioClip), 1 Pro Tools pastels, 2 Ableton brights
+    bool      clipTitleBar = false;  // draw a region name strip atop each clip (DAW regions)
+    bool      tintLanes = false;     // tint the whole lane with the track colour (Pro Tools)
     juce::String name;
 
     enum Daw { Layback = 0, Logic, ProTools, Ableton };
+
+    static juce::Colour clipColour (int palette, juce::Colour fallback, int idx)
+    {
+        if (palette == 1)   // Pro Tools muted pastels
+        {
+            static const juce::uint32 pt[] = { 0xff5f8f6a, 0xff5a82ad, 0xff8a6fae, 0xffab8a5a, 0xffac5f86, 0xff5f9aa0 };
+            return juce::Colour (pt[(size_t) (idx % 6)]);
+        }
+        if (palette == 2)   // Ableton bright flats
+        {
+            static const juce::uint32 ab[] = { 0xffe0913d, 0xff5aa0d0, 0xff7bbf5a, 0xffd06fb0, 0xffd0bf4a, 0xff6f6fd6 };
+            return juce::Colour (ab[(size_t) (idx % 6)]);
+        }
+        return fallback;
+    }
 
     static Skin forDaw (Daw d)
     {
@@ -34,7 +52,8 @@ struct Skin
                 s.videoClip = juce::Colour (0xff6b7280); s.videoStrip = juce::Colour (0xff8a93a0);
                 s.audioClip = juce::Colour (0xff3f7fd6); s.audioStrip = juce::Colour (0xff58a06a);
                 s.waveform = juce::Colour (0xffd6e6ff); s.timecodeText = juce::Colour (0xffe8e8ea); s.timecodeBg = juce::Colour (0xff1b1b1d);
-                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.5f; s.layout = 1; break;   // metallic + top control bar
+                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.5f; s.layout = 1;
+                s.clipTitleBar = true; break;   // metallic + top control bar, named regions
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms
                 s.name = "Pro Tools";
@@ -46,7 +65,8 @@ struct Skin
                 s.videoClip = juce::Colour (0xff2f6f8f); s.videoStrip = juce::Colour (0xff47a0c4);
                 s.audioClip = juce::Colour (0xff1f8f6f); s.audioStrip = juce::Colour (0xff27c79a);
                 s.waveform = juce::Colour (0xffaef0d6); s.timecodeText = juce::Colour (0xff36e0a8); s.timecodeBg = juce::Colour (0xff0a0a0a);
-                s.flatClips = false; s.buttonLook = 2; s.buttonRadius = 3.0f; s.layout = 3; break;   // beveled + big-counter top bar
+                s.flatClips = false; s.buttonLook = 2; s.buttonRadius = 3.0f; s.layout = 3;
+                s.clipPalette = 1; s.clipTitleBar = true; s.tintLanes = true; break;   // beveled, per-track pastel lanes
 
             case Ableton:   // medium grey, orange accent, FLAT clips with dark waveforms
                 s.name = "Ableton Live";
@@ -58,7 +78,8 @@ struct Skin
                 s.videoClip = juce::Colour (0xff5aa0d0); s.videoStrip = juce::Colour (0xff7ab8e0);
                 s.audioClip = juce::Colour (0xffe0913d); s.audioStrip = juce::Colour (0xfff0a955);
                 s.waveform = juce::Colour (0xff3a2a14); s.timecodeText = juce::Colour (0xffffb968); s.timecodeBg = juce::Colour (0xff1e1e1e);
-                s.flatClips = true; s.buttonLook = 3; s.buttonRadius = 2.0f; s.layout = 2; break;    // flat + video docked right
+                s.flatClips = true; s.buttonLook = 3; s.buttonRadius = 2.0f; s.layout = 2;
+                s.clipPalette = 2; s.clipTitleBar = true; break;    // flat bright clips, video docked right
 
             case Layback:
             default:        // OUR flagship "Midnight Indigo Glass": violet/cyan, backlit-glass keys
@@ -71,7 +92,7 @@ struct Skin
                 s.videoClip = juce::Colour (0xff2a4f8c); s.videoStrip = juce::Colour (0xff3fb6ff);
                 s.audioClip = juce::Colour (0xff4a3a8f); s.audioStrip = juce::Colour (0xff7c5cff);
                 s.waveform = juce::Colour (0xff9fe7ff); s.timecodeText = juce::Colour (0xff8affe6); s.timecodeBg = juce::Colour (0xff080711);
-                s.flatClips = false; s.buttonLook = 4; s.buttonRadius = 7.0f; break;   // backlit glass key
+                s.flatClips = false; s.buttonLook = 4; s.buttonRadius = 7.0f; s.clipTitleBar = true; break;   // backlit glass key
 
         }
         return s;

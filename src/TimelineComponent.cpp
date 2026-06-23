@@ -244,10 +244,15 @@ void TimelineComponent::paint (juce::Graphics& g)
             const auto* grp = (*groups)[(size_t) row.group].get();
             const auto* t = grp->tracks[(size_t) row.track].get();
 
+            const auto base     = Skin::clipColour (skin.clipPalette, skin.audioClip,  row.track);
+            const auto stripCol = Skin::clipColour (skin.clipPalette, skin.audioStrip, row.track);
+
             g.setColour ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd);
             g.fillRect (0, row.y, headerW, rowHeight);
-            g.setColour (skin.audioStrip);     // audio track color strip
-            g.fillRect (0, row.y, 2, rowHeight);
+            if (skin.tintLanes)                                   // Pro Tools: tint the whole lane its track colour
+            { g.setColour (base.withAlpha (0.14f)); g.fillRect (headerW, row.y, w - headerW, rowHeight); }
+            g.setColour (stripCol);                               // track colour strip
+            g.fillRect (0, row.y, 3, rowHeight);
 
             g.setColour (skin.text);
             g.setFont (11.0f);
@@ -260,33 +265,48 @@ void TimelineComponent::paint (juce::Graphics& g)
                 const auto& c = t->clips[(size_t) j];
                 auto r = clipRectAt (row.y, c);
                 const bool sel = (row.group == selGroup && row.track == selTrack && j == selClip);
-                const float rad = skin.flatClips ? 3.0f : 4.0f;
+                const float rad = skin.flatClips ? 2.5f : 4.0f;
 
                 if (sel)   // soft selection glow
                 {
                     g.setColour (skin.accent.withAlpha (0.45f));
                     g.drawRoundedRectangle (r.expanded (2.0f), rad + 1.5f, 2.0f);
                 }
-                if (skin.flatClips) { g.setColour (skin.audioClip); g.fillRoundedRectangle (r, rad); }
+                if (skin.flatClips) { g.setColour (base); g.fillRoundedRectangle (r, rad); }
                 else
                 {
-                    g.setGradientFill (juce::ColourGradient (skin.audioClip.brighter (0.12f), r.getX(), r.getY(),
-                                                             skin.audioClip.darker (0.18f),  r.getX(), r.getBottom(), false));
+                    g.setGradientFill (juce::ColourGradient (base.brighter (0.10f), r.getX(), r.getY(),
+                                                             base.darker (0.20f),  r.getX(), r.getBottom(), false));
                     g.fillRoundedRectangle (r, rad);
+                }
+
+                // region title strip with the clip name (DAW-style named regions)
+                const bool titled = skin.clipTitleBar && r.getWidth() > 38.0f && r.getHeight() > 24.0f;
+                auto waveArea = r.reduced (3.0f);
+                if (titled)
+                {
+                    auto bar = r.withHeight (13.0f);
+                    g.setColour (base.darker (0.45f).withAlpha (0.92f));
+                    g.fillRect (bar.withTrimmedTop (1.0f).reduced (1.0f, 0.0f));
+                    g.setColour (juce::Colours::white.withAlpha (0.92f));
+                    g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f)));
+                    g.drawText (t->name, bar.toNearestInt().reduced (5, 0), juce::Justification::centredLeft, true);
+                    waveArea = r.withTrimmedTop (13.0f).reduced (3.0f, 2.0f);
                 }
 
                 if (t->thumb != nullptr && t->thumb->getTotalLength() > 0.0)
                 {
-                    g.setColour (skin.waveform);
-                    t->thumb->drawChannels (g, r.reduced (4.0f).toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
+                    const juce::Colour wave = base.getPerceivedBrightness() > 0.52f ? base.darker (0.62f) : skin.waveform;
+                    g.setColour (wave);
+                    t->thumb->drawChannels (g, waveArea.toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
 
-                g.setColour (sel ? juce::Colours::white : skin.audioClip.brighter (0.30f));
+                g.setColour (sel ? juce::Colours::white : base.brighter (0.32f));
                 g.drawRoundedRectangle (r, rad, sel ? 2.0f : 1.0f);
 
-                if (r.getWidth() > 52.0f)
+                if (! titled && r.getWidth() > 52.0f)            // fallback name overlay for narrow clips
                 {
-                    g.setColour (labelOn (skin.audioClip).withAlpha (0.80f));
+                    g.setColour (labelOn (base).withAlpha (0.80f));
                     g.setFont (10.0f);
                     g.drawText (t->name, r.toNearestInt().reduced (6, 2), juce::Justification::topLeft, true);
                 }
@@ -296,8 +316,8 @@ void TimelineComponent::paint (juce::Graphics& g)
                         if (b >= c.sourceIn && b <= c.sourceIn + c.duration)
                         {
                             const int bx = (int) xForTime (c.timelineStart + (b - c.sourceIn));
-                            g.setColour (labelOn (skin.audioClip).withAlpha (0.45f));
-                            g.drawVerticalLine (bx, (float) (r.getY() + 3), (float) (r.getBottom() - 3));
+                            g.setColour (labelOn (base).withAlpha (0.40f));
+                            g.drawVerticalLine (bx, (float) waveArea.getY(), (float) (r.getBottom() - 3));
                         }
             }
         }
