@@ -1,0 +1,23 @@
+# Cloned dependencies (large; fetched, not committed)
+/external/
+
+# Build output
+/build/
+/cmake-build-*/
+DerivedData/
+*.o
+*.a
+*.dylib
+*.app
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.xcodeproj
+*.xcworkspace
+
+# Media test assets (large)
+/assets/test-media/

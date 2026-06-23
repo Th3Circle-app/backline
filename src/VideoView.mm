@@ -1,0 +1,241 @@
+#include "VideoView.h"
+
+#import <AVFoundation/AVFoundation.h>
+#import <QuartzCore/QuartzCore.h>
+#import <AppKit/AppKit.h>
+
+//==============================================================================
+// Non-ARC Objective-C++ (matches JUCE's macOS layer). Manual retain/release.
+struct VideoViewImpl
+{
+    NSView*         view        = nil;   // layer-backed container view
+    AVPlayer*       player      = nil;
+    AVPlayerLayer*  playerLayer = nil;
+    std::unique_ptr<juce::NSViewComponent> nsViewComp;
+};
+
+//==============================================================================
+VideoView::VideoView()
+{
+    auto* i = new VideoViewImpl();
+
+    i->view = [[NSView alloc] initWithFrame: NSMakeRect (0, 0, 320, 180)];
+    [i->view setWantsLayer: YES];
+    i->view.layer.backgroundColor = [[NSColor blackColor] CGColor];
+
+    i->nsViewComp = std::make_unique<juce::NSViewComponent>();
+    i->nsViewComp->setView (i->view);     // JUCE retains the view while attached
+    addAndMakeVisible (i->nsViewComp.get());
+
+    impl = i;
+}
+
+VideoView::~VideoView()
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr)
+    {
+        if (i->nsViewComp != nullptr)
+            i->nsViewComp->setView (nullptr);
+
+        if (i->playerLayer != nil) { [i->playerLayer removeFromSuperlayer]; [i->playerLayer release]; }
+        if (i->player != nil)      { [i->player release]; }
+        if (i->view != nil)        { [i->view release]; }
+
+        delete i;
+    }
+
+    impl = nullptr;
+}
+
+//==============================================================================
+bool VideoView::loadFile (const juce::File& file)
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i == nullptr)
+        return false;
+
+    NSString* path = [NSString stringWithUTF8String: file.getFullPathName().toRawUTF8()];
+    NSURL* url = [NSURL fileURLWithPath: path];
+    if (url == nil)
+        return false;
+
+    AVPlayer* player = [[AVPlayer alloc] initWithURL: url];               // owned (alloc)
+    player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
+
+    AVPlayerLayer* layer = [[AVPlayerLayer playerLayerWithPlayer: player] retain];  // owned (retain)
+    layer.videoGravity = AVLayerVideoGravityResizeAspect;
+    layer.frame = i->view.bounds;
+    layer.autoresizingMask = (kCALayerWidthSizable | kCALayerHeightSizable);
+
+    // Tear down any previous clip.
+    if (i->playerLayer != nil) { [i->playerLayer removeFromSuperlayer]; [i->playerLayer release]; i->playerLayer = nil; }
+    if (i->player != nil)      { [i->player release]; i->player = nil; }
+
+    [i->view.layer addSublayer: layer];
+
+    i->player      = player;
+    i->playerLayer = layer;
+    return true;
+}
+
+void VideoView::play()
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+        [i->player play];
+}
+
+void VideoView::pause()
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+        [i->player pause];
+}
+
+bool VideoView::isPlaying() const
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+        return i->player.rate != 0.0f;
+    return false;
+}
+
+double VideoView::getDurationSeconds() const
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil && i->player.currentItem != nil)
+    {
+        CMTime d = i->player.currentItem.duration;
+        if (CMTIME_IS_NUMERIC (d))
+            return CMTimeGetSeconds (d);
+    }
+    return 0.0;
+}
+
+double VideoView::getPositionSeconds() const
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+    {
+        CMTime t = [i->player currentTime];
+        if (CMTIME_IS_NUMERIC (t))
+            return CMTimeGetSeconds (t);
+    }
+    return 0.0;
+}
+
+void VideoView::setPositionSeconds (double seconds)
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+    {
+        CMTime t = CMTimeMakeWithSeconds (seconds, 600);   // 600 ticks/sec: clean for common frame rates
+        [i->player seekToTime: t toleranceBefore: kCMTimeZero toleranceAfter: kCMTimeZero];
+    }
+}
+
+double VideoView::probeDurationSeconds (const juce::File& file)
+{
+    NSString* path = [NSString stringWithUTF8String: file.getFullPathName().toRawUTF8()];
+    NSURL* url = [NSURL fileURLWithPath: path];
+    AVURLAsset* asset = [AVURLAsset URLAssetWithURL: url
+                                            options: @{ AVURLAssetPreferPreciseDurationAndTimingKey : @YES }];
+    if (asset == nil) return 0.0;
+
+    CMTime d = asset.duration;
+    double secs = CMTIME_IS_NUMERIC (d) ? CMTimeGetSeconds (d) : 0.0;
+
+    if (secs <= 0.0)   // fall back to the first video track's time range
+    {
+        NSArray<AVAssetTrack*>* vtracks = [asset tracksWithMediaType: AVMediaTypeVideo];
+        if (vtracks.count > 0)
+        {
+            CMTime td = vtracks.firstObject.timeRange.duration;
+            if (CMTIME_IS_NUMERIC (td)) secs = CMTimeGetSeconds (td);
+        }
+    }
+    return secs;
+}
+
+void VideoView::exportVideoWithAudio (const juce::File& videoFile, const juce::File& audioFile,
+                                      double lengthSeconds, const juce::File& outFile,
+                                      std::function<void (bool, juce::String)> onDone)
+{
+    NSURL* vurl = [NSURL fileURLWithPath: [NSString stringWithUTF8String: videoFile.getFullPathName().toRawUTF8()]];
+    NSURL* aurl = [NSURL fileURLWithPath: [NSString stringWithUTF8String: audioFile.getFullPathName().toRawUTF8()]];
+    NSURL* ourl = [NSURL fileURLWithPath: [NSString stringWithUTF8String: outFile.getFullPathName().toRawUTF8()]];
+
+    AVURLAsset* vAsset = [AVURLAsset URLAssetWithURL: vurl options: @{ AVURLAssetPreferPreciseDurationAndTimingKey : @YES }];
+    AVURLAsset* aAsset = [AVURLAsset URLAssetWithURL: aurl options: nil];
+
+    AVMutableComposition* comp = [AVMutableComposition composition];
+    const CMTime len = CMTimeMakeWithSeconds (lengthSeconds, 600);
+
+    NSArray<AVAssetTrack*>* vtracks = [vAsset tracksWithMediaType: AVMediaTypeVideo];
+    if (vtracks.count == 0) { if (onDone) onDone (false, "No video track in source."); return; }
+
+    AVAssetTrack* vTrack = vtracks.firstObject;
+    AVMutableCompositionTrack* compV = [comp addMutableTrackWithMediaType: AVMediaTypeVideo
+                                                        preferredTrackID: kCMPersistentTrackID_Invalid];
+    NSError* err = nil;
+    [compV insertTimeRange: CMTimeRangeMake (kCMTimeZero, CMTimeMinimum (len, vTrack.timeRange.duration))
+                   ofTrack: vTrack atTime: kCMTimeZero error: &err];
+    compV.preferredTransform = vTrack.preferredTransform;   // preserve orientation
+
+    NSArray<AVAssetTrack*>* atracks = [aAsset tracksWithMediaType: AVMediaTypeAudio];
+    if (atracks.count > 0)
+    {
+        AVAssetTrack* aTrack = atracks.firstObject;
+        AVMutableCompositionTrack* compA = [comp addMutableTrackWithMediaType: AVMediaTypeAudio
+                                                            preferredTrackID: kCMPersistentTrackID_Invalid];
+        [compA insertTimeRange: CMTimeRangeMake (kCMTimeZero, CMTimeMinimum (len, aTrack.timeRange.duration))
+                       ofTrack: aTrack atTime: kCMTimeZero error: &err];
+    }
+
+    [[NSFileManager defaultManager] removeItemAtURL: ourl error: nil];
+
+    AVAssetExportSession* ex = [[AVAssetExportSession alloc] initWithAsset: comp
+                                                               presetName: AVAssetExportPresetHighestQuality];
+    if (ex == nil) { if (onDone) onDone (false, "Could not create export session."); return; }
+    ex.outputURL = ourl;
+    NSString* ext = [[ourl pathExtension] lowercaseString];
+    if ([ext isEqualToString: @"mp4"])      ex.outputFileType = AVFileTypeMPEG4;
+    else if ([ext isEqualToString: @"m4v"]) ex.outputFileType = AVFileTypeAppleM4V;
+    else                                    ex.outputFileType = AVFileTypeQuickTimeMovie;
+    ex.timeRange = CMTimeRangeMake (kCMTimeZero, len);
+
+    std::function<void (bool, juce::String)> cb = onDone;
+    [ex exportAsynchronouslyWithCompletionHandler: ^{
+        const bool ok = (ex.status == AVAssetExportSessionStatusCompleted);
+        NSString* e = ex.error != nil ? ex.error.localizedDescription : @"";
+        juce::String msg = juce::String::fromUTF8 (e.UTF8String != nullptr ? e.UTF8String : "");
+        juce::MessageManager::callAsync ([cb, ok, msg] { if (cb) cb (ok, msg); });
+        [ex release];
+    }];
+}
+
+void VideoView::setMuted (bool shouldBeMuted)
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil)
+        i->player.muted = shouldBeMuted ? YES : NO;
+}
+
+void VideoView::resized()
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i == nullptr)
+        return;
+
+    if (i->nsViewComp != nullptr)
+        i->nsViewComp->setBounds (getLocalBounds());
+
+    if (i->playerLayer != nil && i->view != nil)
+    {
+        [CATransaction begin];
+        [CATransaction setDisableActions: YES];   // no resize animation lag
+        i->playerLayer.frame = i->view.bounds;
+        [CATransaction commit];
+    }
+}
