@@ -64,7 +64,8 @@ enum class KeyProfile { Layback, Logic, ProTools, Ableton };
 class MainComponent : public juce::Component,
                       private juce::Timer,
                       private juce::ChangeListener,
-                      public juce::ApplicationCommandTarget
+                      public juce::ApplicationCommandTarget,
+                      public juce::MenuBarModel
 {
 public:
     MainComponent()
@@ -153,6 +154,9 @@ public:
         setWantsKeyboardFocus (true);
         applyKeyProfile (KeyProfile::Layback);
 
+        setApplicationCommandManagerToWatch (&commandManager);   // refreshes command-item states
+        juce::MenuBarModel::setMacMainMenu (this);               // File / Edit / Track / Transport / Station at the top
+
         setSize (1120, 820);
 
         const juce::StringArray candidates {
@@ -172,6 +176,7 @@ public:
 
     ~MainComponent() override
     {
+        juce::MenuBarModel::setMacMainMenu (nullptr);
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
         if (alive) *alive = false;   // in-flight ffmpeg/scan worker callbacks bail instead of touching a dead window
@@ -880,6 +885,83 @@ private:
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
         timeline.repaint();
+    }
+
+    //==========================================================================
+    // Top menu bar (native macOS menu bar, like Logic / Pro Tools / Ableton).
+    juce::StringArray getMenuBarNames() override { return { "File", "Edit", "Track", "Transport", "Station" }; }
+
+    juce::PopupMenu getMenuForIndex (int index, const juce::String&) override
+    {
+        juce::PopupMenu m;
+        if (index == 0)        // File
+        {
+            m.addItem (9001, "New Project");
+            m.addItem (9002, "Open Project...");
+            m.addItem (9003, "Save Project...");
+            m.addSeparator();
+            m.addItem (9004, "Add Video...");
+            m.addSeparator();
+            m.addItem (9005, "Export Video + Audio...");
+            m.addItem (9006, "Export Audio (WAV)...");
+        }
+        else if (index == 1)   // Edit
+        {
+            m.addCommandItem (&commandManager, LSCmd::Undo);
+            m.addCommandItem (&commandManager, LSCmd::Redo);
+            m.addSeparator();
+            m.addCommandItem (&commandManager, LSCmd::Split);
+            m.addCommandItem (&commandManager, LSCmd::DeleteClip);
+        }
+        else if (index == 2)   // Track
+        {
+            m.addItem (9010, "Import Audio Track...", activeGroup >= 0);
+            m.addSeparator();
+            const bool hasTrack = validTrack (selGroup, selTrack);
+            m.addItem (9011, "Insert EQ on Selected Track",         hasTrack);
+            m.addItem (9012, "Insert Compressor on Selected Track", hasTrack);
+            m.addSeparator();
+            m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning);
+        }
+        else if (index == 3)   // Transport
+        {
+            m.addCommandItem (&commandManager, LSCmd::TogglePlay);
+            m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
+            m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            m.addSeparator();
+            m.addCommandItem (&commandManager, LSCmd::NudgeLeft);
+            m.addCommandItem (&commandManager, LSCmd::NudgeRight);
+        }
+        else if (index == 4)   // Station (skin + keymap)
+        {
+            m.addItem (9020, "Layback",      true, keyProfile == KeyProfile::Layback);
+            m.addItem (9021, "Logic",        true, keyProfile == KeyProfile::Logic);
+            m.addItem (9022, "Pro Tools",    true, keyProfile == KeyProfile::ProTools);
+            m.addItem (9023, "Ableton Live", true, keyProfile == KeyProfile::Ableton);
+        }
+        return m;
+    }
+
+    void menuItemSelected (int menuItemID, int) override
+    {
+        switch (menuItemID)
+        {
+            case 9001: newProject();    break;
+            case 9002: openProject();   break;
+            case 9003: saveProject();   break;
+            case 9004: openAddVideo();  break;
+            case 9005: exportVideo();   break;
+            case 9006: exportAudio();   break;
+            case 9010: if (activeGroup >= 0) importTrack (activeGroup); break;
+            case 9011: if (validTrack (selGroup, selTrack)) audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 0); break;
+            case 9012: if (validTrack (selGroup, selTrack)) audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 1); break;
+            case 9013: startPluginScan(); break;
+            case 9020: applyKeyProfile (KeyProfile::Layback);  break;
+            case 9021: applyKeyProfile (KeyProfile::Logic);    break;
+            case 9022: applyKeyProfile (KeyProfile::ProTools); break;
+            case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
+            default: break;
+        }
     }
 
     void showKeysMenu()
