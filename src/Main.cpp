@@ -12,6 +12,7 @@
 #include "Track.h"
 #include "LaybackLookAndFeel.h"
 #include "MixerView.h"
+#include "LogicControlBar.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -111,6 +112,15 @@ public:
         videoButton.onClick = [this] { showVideoWindow (videoButton.getToggleState()); };
         addAndMakeVisible (videoButton);
         videoWindow = std::make_unique<VideoWindow> (video, [this] { showVideoWindow (false); });
+
+        logicBar.onRewind = [this] { seekAll (0.0); };
+        logicBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
+        logicBar.onPlay   = [this] { togglePlay(); };
+        logicBar.onRecord = [this] { /* recording is Phase C */ };
+        logicBar.onCycle  = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
+        logicBar.isPlaying = [this] { return playing; };
+        logicBar.isCycle   = [this] { return loopEnabled; };
+        addChildComponent (logicBar);
 
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
@@ -438,16 +448,46 @@ public:
     {
         switch (laf.skin.layout)
         {
-            case 1: layoutStacked (52, 240); break;   // Logic
+            case 1: layoutLogic();           break;   // Logic: dedicated LCD control bar
             case 3: layoutStacked (58, 280); break;   // Pro Tools: taller bar, bigger counter
             case 2: layoutAbleton();         break;   // Ableton
             default: layoutDefault();        break;   // Layback
         }
     }
 
+    // Toggle the generic toolbar vs the Logic control bar.
+    void setLogicChrome (bool logic)
+    {
+        logicBar.setVisible (logic);
+        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &videoButton })
+            c->setVisible (! logic);
+        loopToggle.setVisible (! logic);
+        snapToggle.setVisible (! logic);
+        timeLabel.setVisible (! logic);
+    }
+
+    // Logic: full-width LCD control bar on top, status line, tracks fill below.
+    void layoutLogic()
+    {
+        setLogicChrome (true);
+        auto area = getLocalBounds();
+        transportBand = area.removeFromTop (58);
+        logicBar.setBounds (transportBand);
+
+        auto status = area.removeFromTop (18);
+        titleLabel.setBounds (status.reduced (10, 0));
+
+        area.removeFromTop (4);
+        if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
+        timelineViewport.setBounds (area);
+        viewerFrame = {};
+        updateTimelineSize();
+    }
+
     // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
     void layoutDefault()
     {
+        setLogicChrome (false);
         auto r = getLocalBounds().reduced (12);
         auto top = r.removeFromTop (24);
         laybackWordmark = top.removeFromLeft (150);   // brand wordmark, drawn in paint()
@@ -487,6 +527,7 @@ public:
     // centered counter, file/export right), status line, docked movie strip, timeline below.
     void layoutStacked (int barH, int counterW)
     {
+        setLogicChrome (false);
         auto area = getLocalBounds();
         transportBand = area.removeFromTop (barH);          // paint() fills this as the control bar
 
@@ -517,6 +558,7 @@ public:
     // arrangement/timeline fills the window, video docked as a right-hand panel.
     void layoutAbleton()
     {
+        setLogicChrome (false);
         auto area = getLocalBounds();
         transportBand = area.removeFromTop (46);
 
@@ -1021,6 +1063,7 @@ private:
         if (auto* win = findParentComponentOfClass<juce::ResizableWindow>())   // restyle the window chrome too
         { win->setBackgroundColour (s.windowBg); win->repaint(); }
         mixerView.setSkin (s);
+        logicBar.setSkin (s);
         resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
@@ -1807,6 +1850,7 @@ private:
         }
 
         timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
+        logicBar.setPosition (formatTime (playhead), formatTime (timelineLength()));
         playButton.setButtonText (playing ? "Pause" : "Play");
     }
 
@@ -1847,6 +1891,7 @@ private:
 
     MixerView mixerView;
     bool      mixerVisible = false;
+    LogicControlBar logicBar;   // shown only for the Logic station
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
