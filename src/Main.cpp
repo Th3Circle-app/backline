@@ -60,6 +60,38 @@ struct PluginWindow : public juce::DocumentWindow
 
     void closeButtonPressed() override { if (onClose) onClose(); }
 };
+
+//==============================================================================
+/** Floating pop-out that shows the synced video while you scrub the timeline,
+    so the main window stays a pure DAW surface. */
+class VideoWindow : public juce::DocumentWindow
+{
+public:
+    struct Content : public juce::Component
+    {
+        VideoView* vid = nullptr;
+        void attach (VideoView* v) { vid = v; if (v != nullptr) addAndMakeVisible (v); resized(); }
+        void resized() override { if (vid != nullptr) vid->setBounds (getLocalBounds()); }
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
+    };
+
+    VideoWindow (VideoView& v, std::function<void()> onCloseClicked)
+        : juce::DocumentWindow ("Video", juce::Colours::black, juce::DocumentWindow::closeButton),
+          onCloseCb (std::move (onCloseClicked))
+    {
+        setUsingNativeTitleBar (true);
+        content.attach (&v);
+        setContentNonOwned (&content, false);   // the VideoView is owned by MainComponent, not this window
+        setResizable (true, false);
+        setSize (640, 380);
+    }
+
+    void closeButtonPressed() override { if (onCloseCb) onCloseCb(); }
+
+    Content content;
+    std::function<void()> onCloseCb;
+};
+
 enum class KeyProfile { Layback, Logic, ProTools, Ableton };
 
 class MainComponent : public juce::Component,
@@ -74,7 +106,11 @@ public:
         setLookAndFeel (&laf);
         juce::LookAndFeel::setDefaultLookAndFeel (&laf);   // theme popup menus too
 
-        addAndMakeVisible (video);
+        videoButton.setButtonText ("Video");
+        videoButton.setClickingTogglesState (true);
+        videoButton.onClick = [this] { showVideoWindow (videoButton.getToggleState()); };
+        addAndMakeVisible (videoButton);
+        videoWindow = std::make_unique<VideoWindow> (video, [this] { showVideoWindow (false); });
 
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
@@ -157,7 +193,7 @@ public:
         projectButton.onClick = [this] { showProjectMenu(); };
         addAndMakeVisible (projectButton);
 
-        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &loopToggle, &snapToggle })
+        for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &loopToggle, &snapToggle, &videoButton })
             c->setWantsKeyboardFocus (false);
 
         commandManager.registerAllCommandsForTarget (this);
@@ -180,6 +216,8 @@ public:
             if (f.existsAsFile()) { addVideo (f); break; }
         }
 
+        if (activeGroup >= 0) showVideoWindow (true);   // pop the video out once a clip is loaded
+
         startTimerHz (30);
 
         loadPersistedPluginList();          // instant; the user triggers a (re)scan from the track menu
@@ -191,6 +229,7 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
         if (alive) *alive = false;   // in-flight ffmpeg/scan worker callbacks bail instead of touching a dead window
+        videoWindow.reset();         // release the video pop-out before the VideoView member is destroyed
         closeAllPluginWindows();     // delete editors while their processors (in the engine) are still alive
         removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
@@ -371,16 +410,28 @@ public:
                 g.setColour (s.accent);
                 g.fillEllipse ((float) (w.getX() + 82), (float) w.getCentreY() - 2.5f, 5.0f, 5.0f);
             }
-            if (! viewerFrame.isEmpty())
+            if (! transportBand.isEmpty())   // the "lay-back line" accent hairline under the transport bar
             {
-                const int y = viewerFrame.getBottom() + 4;
-                g.setGradientFill (juce::ColourGradient (s.accent, (float) viewerFrame.getX(), 0.0f,
-                                                         juce::Colour (0xff3fe0ff), (float) viewerFrame.getRight(), 0.0f, false));
-                g.fillRect (viewerFrame.getX(), y, viewerFrame.getWidth(), 2);
-                g.setColour (s.accent.withAlpha (0.12f));
-                g.fillRect (viewerFrame.getX(), y + 2, viewerFrame.getWidth(), 3);
+                const int y = transportBand.getBottom();
+                g.setGradientFill (juce::ColourGradient (s.accent, (float) transportBand.getX(), 0.0f,
+                                                         juce::Colour (0xff3fe0ff), (float) transportBand.getRight(), 0.0f, false));
+                g.fillRect (transportBand.getX(), y, transportBand.getWidth(), 2);
+                g.setColour (s.accent.withAlpha (0.10f));
+                g.fillRect (transportBand.getX(), y + 2, transportBand.getWidth(), 3);
             }
         }
+    }
+
+    void showVideoWindow (bool show)
+    {
+        videoWindowOpen = show;
+        if (videoWindow != nullptr)
+        {
+            videoWindow->setVisible (show);
+            if (show) videoWindow->toFront (true);
+        }
+        if (videoButton.getToggleState() != show)
+            videoButton.setToggleState (show, juce::dontSendNotification);
     }
 
     void resized() override
@@ -389,7 +440,7 @@ public:
         {
             case 1: layoutStacked (52, 240); break;   // Logic
             case 3: layoutStacked (58, 280); break;   // Pro Tools: taller bar, bigger counter
-            case 2: layoutAbleton();         break;   // Ableton: video docked right
+            case 2: layoutAbleton();         break;   // Ableton
             default: layoutDefault();        break;   // Layback
         }
     }
@@ -404,16 +455,13 @@ public:
         titleLabel.setBounds (top);
         r.removeFromTop (6);
 
-        if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
-
-        timelineViewport.setBounds (r.removeFromBottom (340));
-        r.removeFromBottom (8);
-
-        auto controls = r.removeFromBottom (40);
+        auto controls = r.removeFromTop (40);                 // transport bar at the top (DAW-like)
         transportBand = { 0, controls.getY() - 6, getWidth(), controls.getHeight() + 12 };
-        r.removeFromBottom (8);
-        video.setBounds (r);
-        viewerFrame = r;
+        r.removeFromTop (10);
+
+        if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
+        timelineViewport.setBounds (r);                       // tracks fill the rest of the window
+        viewerFrame = {};
 
         openButton.setBounds (controls.removeFromLeft (104));
         controls.removeFromLeft (8);
@@ -422,11 +470,13 @@ public:
         playButton.setBounds (controls.removeFromLeft (84));
         controls.removeFromLeft (10);
         loopToggle.setBounds (controls.removeFromLeft (66));
-        controls.removeFromLeft (10);
+        controls.removeFromLeft (8);
         snapToggle.setBounds (controls.removeFromLeft (62));
-        controls.removeFromLeft (10);
+        controls.removeFromLeft (8);
+        videoButton.setBounds (controls.removeFromLeft (72));
+        controls.removeFromLeft (8);
         keysButton.setBounds (controls.removeFromLeft (118));
-        controls.removeFromLeft (10);
+        controls.removeFromLeft (8);
         exportButton.setBounds (controls.removeFromLeft (90));
         timeLabel.setBounds  (controls.removeFromRight (150));
 
@@ -443,7 +493,8 @@ public:
         auto b = transportBand.reduced (10, juce::jmax (6, (barH - 34) / 2));
         playButton.setBounds (b.removeFromLeft (64)); b.removeFromLeft (6);
         loopToggle.setBounds (b.removeFromLeft (56)); b.removeFromLeft (6);
-        snapToggle.setBounds (b.removeFromLeft (52));
+        snapToggle.setBounds (b.removeFromLeft (52)); b.removeFromLeft (6);
+        videoButton.setBounds (b.removeFromLeft (62));
 
         exportButton.setBounds  (b.removeFromRight (86));  b.removeFromRight (6);
         keysButton.setBounds    (b.removeFromRight (122)); b.removeFromRight (6);
@@ -455,13 +506,10 @@ public:
         auto status = area.removeFromTop (18);
         titleLabel.setBounds (status.reduced (10, 0));
 
-        auto viewer = area.removeFromTop (juce::jlimit (140, 320, area.getHeight() * 2 / 5));
-        video.setBounds (viewer.reduced (10, 6));
-        viewerFrame = video.getBounds();
-
         area.removeFromTop (4);
         if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
-        timelineViewport.setBounds (area);
+        timelineViewport.setBounds (area);                  // tracks fill the window (video is a pop-out)
+        viewerFrame = {};
         updateTimelineSize();
     }
 
@@ -476,7 +524,8 @@ public:
         playButton.setBounds (b.removeFromLeft (58)); b.removeFromLeft (8);
         timeLabel.setBounds  (b.removeFromLeft (168)); b.removeFromLeft (10);   // clock beside the transport
         loopToggle.setBounds (b.removeFromLeft (54)); b.removeFromLeft (6);
-        snapToggle.setBounds (b.removeFromLeft (50));
+        snapToggle.setBounds (b.removeFromLeft (50)); b.removeFromLeft (6);
+        videoButton.setBounds (b.removeFromLeft (60));
 
         exportButton.setBounds  (b.removeFromRight (84));  b.removeFromRight (6);
         keysButton.setBounds    (b.removeFromRight (120)); b.removeFromRight (6);
@@ -487,12 +536,8 @@ public:
         titleLabel.setBounds (status.reduced (10, 0));
 
         if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (200)); area.removeFromBottom (4); }
-
-        auto viewerCol = area.removeFromRight (juce::jlimit (260, 460, area.getWidth() / 3));
-        video.setBounds (viewerCol.reduced (8, 6).removeFromTop (juce::jmax (140, juce::jmin (260, viewerCol.getHeight() / 2))));
-        viewerFrame = video.getBounds();
-        area.removeFromRight (4);
-        timelineViewport.setBounds (area);
+        timelineViewport.setBounds (area);                  // arrangement fills the window (video is a pop-out)
+        viewerFrame = {};
         updateTimelineSize();
     }
 
@@ -1092,6 +1137,7 @@ private:
         }
         else if (name == "View")
         {
+            m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
@@ -1101,6 +1147,7 @@ private:
         }
         else if (name == "Options" || name == "Setup")    // Ableton / Pro Tools
         {
+            m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addSeparator();
             rescan();
@@ -1109,6 +1156,7 @@ private:
         }
         else if (name == "Window")
         {
+            m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
             m.addItem (9040, "Close All Plugin Windows", ! pluginWindows.empty());
         }
@@ -1139,6 +1187,7 @@ private:
             case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
             case 9030: seekAll (0.0); break;
             case 9040: closeAllPluginWindows(); break;
+            case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9050: toggleMixer(); break;
             default: break;
         }
@@ -1781,7 +1830,7 @@ private:
     TimelineComponent timeline;
     juce::Viewport timelineViewport;
 
-    juce::TextButton openButton, playButton, exportButton, keysButton, projectButton;
+    juce::TextButton openButton, playButton, exportButton, keysButton, projectButton, videoButton;
     juce::ToggleButton loopToggle, snapToggle;
     juce::ApplicationCommandManager commandManager;
     KeyProfile keyProfile = KeyProfile::Layback;
@@ -1789,6 +1838,8 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> transportBand, viewerFrame, laybackWordmark;
 
+    std::unique_ptr<VideoWindow> videoWindow;   // destroyed in ~MainComponent before `video`
+    bool videoWindowOpen = false;
     std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;
