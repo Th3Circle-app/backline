@@ -14,6 +14,7 @@ struct Skin
     bool      flatClips = false;     // Ableton-style flat fills + dark waveform vs. gradient fills
     int       buttonLook = 0;        // 0 glossy(Layback) 1 metallic(Logic) 2 beveled(ProTools) 3 flat(Ableton)
     float     buttonRadius = 5.0f;
+    int       layout = 0;            // 0 default (viewer-top), 1 Logic (top control bar + docked movie)
     juce::String name;
 
     enum Daw { Layback = 0, Logic, ProTools, Ableton };
@@ -33,7 +34,7 @@ struct Skin
                 s.videoClip = juce::Colour (0xff6b7280); s.videoStrip = juce::Colour (0xff8a93a0);
                 s.audioClip = juce::Colour (0xff3f7fd6); s.audioStrip = juce::Colour (0xff58a06a);
                 s.waveform = juce::Colour (0xffd6e6ff); s.timecodeText = juce::Colour (0xffe8e8ea); s.timecodeBg = juce::Colour (0xff1b1b1d);
-                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.5f; break;   // metallic
+                s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.5f; s.layout = 1; break;   // metallic + top control bar
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms
                 s.name = "Pro Tools";

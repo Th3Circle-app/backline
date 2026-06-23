@@ -344,6 +344,13 @@ public:
 
     void resized() override
     {
+        if (laf.skin.layout == 1) { layoutLogic(); return; }
+        layoutDefault();
+    }
+
+    // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
+    void layoutDefault()
+    {
         auto r = getLocalBounds().reduced (12);
         titleLabel.setBounds (r.removeFromTop (22));
         r.removeFromTop (6);
@@ -372,6 +379,37 @@ public:
         exportButton.setBounds (controls.removeFromLeft (90));
         timeLabel.setBounds  (controls.removeFromRight (150));
 
+        updateTimelineSize();
+    }
+
+    // Logic orientation: full-width top control bar (transport left, centered LCD,
+    // file/export right), a status line, a docked "movie" strip, timeline fills the rest.
+    void layoutLogic()
+    {
+        auto area = getLocalBounds();
+        transportBand = area.removeFromTop (52);            // paint() fills this as the control bar
+
+        auto b = transportBand.reduced (10, 9);
+        playButton.setBounds (b.removeFromLeft (64)); b.removeFromLeft (6);
+        loopToggle.setBounds (b.removeFromLeft (56)); b.removeFromLeft (6);
+        snapToggle.setBounds (b.removeFromLeft (52));
+
+        exportButton.setBounds  (b.removeFromRight (86));  b.removeFromRight (6);
+        keysButton.setBounds    (b.removeFromRight (122)); b.removeFromRight (6);
+        projectButton.setBounds (b.removeFromRight (80));  b.removeFromRight (6);
+        openButton.setBounds    (b.removeFromRight (104)); b.removeFromRight (12);
+
+        timeLabel.setBounds (b.withSizeKeepingCentre (juce::jmax (120, juce::jmin (240, b.getWidth())), b.getHeight()));
+
+        auto status = area.removeFromTop (18);
+        titleLabel.setBounds (status.reduced (10, 0));
+
+        auto viewer = area.removeFromTop (juce::jlimit (140, 320, area.getHeight() * 2 / 5));
+        video.setBounds (viewer.reduced (10, 6));
+        viewerFrame = video.getBounds();
+
+        area.removeFromTop (4);
+        timelineViewport.setBounds (area);
         updateTimelineSize();
     }
 
@@ -838,6 +876,7 @@ private:
         snapToggle.setColour (juce::ToggleButton::textColourId, s.text);
         if (auto* win = findParentComponentOfClass<juce::ResizableWindow>())   // restyle the window chrome too
         { win->setBackgroundColour (s.windowBg); win->repaint(); }
+        resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
         timeline.repaint();
