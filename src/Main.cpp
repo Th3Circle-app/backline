@@ -1888,9 +1888,11 @@ private:
         }
 
         timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
-        logicBar.setPosition (formatTime (playhead), formatTime (timelineLength()));
-        audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix meter incl. video
-        logicBar.setMasterLevel (audioEngine.getMasterPeak());
+        const int bbBar   = (int) (playhead / 2.0) + 1;                  // 120 BPM 4/4 -> bars/beats LCD
+        const double inBar = playhead - 2.0 * (double) (bbBar - 1);
+        const int bbBeat  = juce::jlimit (1, 4, (int) (inBar / 0.5) + 1);
+        logicBar.setPosition (juce::String (bbBar) + "  " + juce::String (bbBeat), formatTime (playhead));
+        audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
     }
