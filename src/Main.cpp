@@ -418,6 +418,18 @@ public:
             g.drawRect (viewerFrame.expanded (2), 1);
         }
 
+        if (laf.skin.layout == 1 && ! logicToolbar.isEmpty())   // Logic local menu row above the tracks
+        {
+            g.setColour (s.panel.brighter (0.04f));
+            g.fillRect (logicToolbar);
+            g.setColour (s.windowBg.darker (0.4f));
+            g.fillRect (logicToolbar.getX(), logicToolbar.getBottom() - 1, logicToolbar.getWidth(), 1);
+            g.setColour (s.muted);
+            g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f)));
+            g.drawText ("Edit        Functions        View", logicToolbar.getX() + 210, logicToolbar.getY(),
+                        360, logicToolbar.getHeight(), juce::Justification::centredLeft, false);
+        }
+
         // Layback signature (default layout only): LAYBACK• wordmark + the "lay-back line" accent hairline
         if (laf.skin.layout == 0)
         {
@@ -487,8 +499,9 @@ public:
 
         auto status = area.removeFromTop (18);
         titleLabel.setBounds (status.reduced (10, 0));
+        logicToolbar = area.removeFromTop (26);                 // local Edit / Functions / View row
+        area.removeFromTop (2);
 
-        area.removeFromTop (4);
         if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
 
         logicInspector.setBounds (area.removeFromLeft (200));   // Logic left Inspector (channel strip)
@@ -1903,7 +1916,7 @@ private:
     KeyProfile keyProfile = KeyProfile::Layback;
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> transportBand, viewerFrame, laybackWordmark;
+    juce::Rectangle<int> transportBand, viewerFrame, laybackWordmark, logicToolbar;
 
     std::unique_ptr<VideoWindow> videoWindow;   // destroyed in ~MainComponent before `video`
     bool videoWindowOpen = false;

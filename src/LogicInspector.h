@@ -54,14 +54,32 @@ public:
         g.fillAll (skin.panel);
         g.setColour (skin.windowBg.darker (0.4f));
         g.fillRect (getWidth() - 1, 0, 1, getHeight());                 // right divider
-        g.setColour (skin.muted);
-        g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
-        g.drawText ("INSPECTOR", 10, 6, getWidth() - 20, 14, juce::Justification::centredLeft, false);
-        if (sel == nullptr)
+
+        auto box = [&] (juce::Rectangle<int> b, const juce::String& title, const juce::StringArray& rows)
         {
-            g.setColour (skin.muted.withAlpha (0.8f));
-            g.drawText ("Select a track", getLocalBounds().reduced (12), juce::Justification::centred, false);
-        }
+            if (b.getHeight() < 22) return;
+            g.setColour (skin.control.darker (0.12f));
+            g.fillRoundedRectangle (b.toFloat(), 4.0f);
+            g.setColour (skin.windowBg.darker (0.3f));
+            g.drawRoundedRectangle (b.toFloat(), 4.0f, 1.0f);
+            auto in = b.reduced (8, 5);
+            g.setColour (skin.accent);
+            g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
+            g.drawText (title, in.removeFromTop (15), juce::Justification::topLeft, false);
+            g.setColour (skin.muted);
+            g.setFont (juce::Font (juce::FontOptions().withHeight (10.5f)));
+            for (auto& row : rows) { if (in.getHeight() < 14) break; g.drawText (row, in.removeFromTop (15), juce::Justification::topLeft, false); }
+        };
+
+        auto a = paramArea;
+        box (a.removeFromTop (72), "Quick Help", { selName.isNotEmpty() ? selName
+                                                                        : juce::String ("Select a track to edit its"),
+                                                   selName.isNotEmpty() ? juce::String ("Audio region selected.")
+                                                                        : juce::String ("parameters + channel strip.") });
+        a.removeFromTop (6);
+        box (a.removeFromTop (juce::jmin (a.getHeight() / 2, 104)), "Region", { "Mute", "Loop", "Fade In / Out", "Gain" });
+        a.removeFromTop (6);
+        box (a, "Track", { "Icon", "Color", "Channel", "Freeze" });
     }
 
     void resized() override
@@ -70,23 +88,27 @@ public:
             master.fader.setValue (engine->getMasterGain(), juce::dontSendNotification);
         auto r = getLocalBounds().reduced (8);
         r.removeFromTop (22);                                          // header
-        const int w = (r.getWidth() - 8) / 2;
-        if (sel != nullptr) sel->setBounds (r.removeFromLeft (w));
-        else                r.removeFromLeft (w);
-        r.removeFromLeft (8);
-        master.setBounds (r.removeFromLeft (w));
+        auto strips = r.removeFromBottom (juce::jmin (r.getHeight(), 320));   // channel strips at the bottom
+        paramArea = r.withTrimmedBottom (6);                          // Quick Help / Region / Track panels above
+        const int w = (strips.getWidth() - 8) / 2;
+        if (sel != nullptr) sel->setBounds (strips.removeFromLeft (w));
+        else                strips.removeFromLeft (w);
+        strips.removeFromLeft (8);
+        master.setBounds (strips.removeFromLeft (w));
     }
 
 private:
     void rebuild()
     {
         sel.reset();
+        selName = {};
         if (groups != nullptr && grp >= 0 && grp < (int) groups->size())
         {
             auto* G = (*groups)[(size_t) grp].get();
             if (trk >= 0 && trk < (int) G->tracks.size())
             {
                 auto* t = G->tracks[(size_t) trk].get();
+                selName = t->name;
                 sel = std::make_unique<ChannelStrip> (false);
                 sel->group = grp; sel->track = trk; sel->engineId = t->engineId;
                 sel->engine = engine; sel->skin = skin;
@@ -116,6 +138,8 @@ private:
     Skin skin = Skin::forDaw (Skin::Logic);
     const std::vector<std::unique_ptr<VideoGroup>>* groups = nullptr;
     int grp = -1, trk = -1;
+    juce::Rectangle<int> paramArea;
+    juce::String selName;
     std::unique_ptr<ChannelStrip> sel;
     ChannelStrip master { true };
 };
