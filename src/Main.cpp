@@ -2,6 +2,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <map>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "VideoView.h"
 #include "TimelineComponent.h"
@@ -813,13 +814,26 @@ private:
 
     //==========================================================================
     // Project save / open. A ".lbproj" bundle = project.json + a media/ folder of copied files.
-    juce::String copyMedia (const juce::File& src, const juce::File& mediaDir)
+    juce::String copyMedia (const juce::File& src, const juce::File& mediaDir,
+                            std::map<juce::String, juce::String>& seen, bool& allOk)
     {
-        if (! src.existsAsFile()) return src.getFullPathName();
-        const juce::File dest = mediaDir.getChildFile (src.getFileName());
+        if (! src.existsAsFile()) { allOk = false; return src.getFullPathName(); }
+        const juce::String key = src.getFullPathName();
+        if (auto it = seen.find (key); it != seen.end()) return it->second;   // same source -> reuse the same media file
+
+        // unique destination per distinct source (hash of the full path) so same-named files never collide
+        const juce::String destName = src.getFileNameWithoutExtension() + "_"
+            + juce::String::toHexString ((juce::int64) (key.hashCode64() & 0xffffffLL)) + src.getFileExtension();
+        const juce::File dest = mediaDir.getChildFile (destName);
+
+        bool copied = true;
         if (! (dest.existsAsFile() && dest.getSize() == src.getSize()))
-            src.copyFileTo (dest);
-        return "media/" + src.getFileName();
+            copied = src.copyFileTo (dest);
+
+        const juce::String result = copied ? ("media/" + destName) : key;   // on failure, keep referencing the original
+        if (! copied) allOk = false;
+        seen[key] = result;
+        return result;
     }
 
     void saveProject()
@@ -835,9 +849,12 @@ private:
                 if (dir == juce::File()) return;
                 if (dir.getFileExtension().toLowerCase() != ".lbproj")
                     dir = dir.getSiblingFile (dir.getFileNameWithoutExtension() + ".lbproj");
-                dir.createDirectory();
+                if (! dir.createDirectory().wasOk()) { titleLabel.setText ("Save failed: can't create project folder.", juce::dontSendNotification); return; }
                 const juce::File media = dir.getChildFile ("media");
-                media.createDirectory();
+                if (! media.createDirectory().wasOk()) { titleLabel.setText ("Save failed: can't create media folder.", juce::dontSendNotification); return; }
+
+                std::map<juce::String, juce::String> seen;
+                bool allOk = true;
 
                 auto* root = new juce::DynamicObject();
                 root->setProperty ("version", 1);
@@ -851,7 +868,7 @@ private:
                 {
                     auto* go = new juce::DynamicObject();
                     go->setProperty ("name", g->name);
-                    go->setProperty ("video", copyMedia (g->file, media));
+                    go->setProperty ("video", copyMedia (g->file, media, seen, allOk));
                     go->setProperty ("duration", g->duration);
                     go->setProperty ("expanded", g->expanded);
                     go->setProperty ("videoMute", g->videoMute);
@@ -863,7 +880,7 @@ private:
                     {
                         auto* to = new juce::DynamicObject();
                         to->setProperty ("name", t->name);
-                        to->setProperty ("file", copyMedia (t->file, media));
+                        to->setProperty ("file", copyMedia (t->file, media, seen, allOk));
                         to->setProperty ("sourceLength", t->sourceLength);
                         to->setProperty ("mute", t->mute);
                         to->setProperty ("solo", t->solo);
@@ -886,8 +903,10 @@ private:
                 }
                 root->setProperty ("groups", garr);
 
-                dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (juce::var (root)));
-                titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
+                const bool wrote = dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+                if (! wrote)      titleLabel.setText ("Save failed: couldn't write project.json.", juce::dontSendNotification);
+                else if (! allOk) titleLabel.setText ("Saved (some media kept by reference): " + dir.getFileName(), juce::dontSendNotification);
+                else              titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
             });
     }
 
@@ -919,7 +938,7 @@ private:
         groups.clear();
         timeline.setGroups (&groups);
         activeGroup = -1; selGroup = selTrack = selClip = -1;
-        playhead = 0.0; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
+        playhead = 0.0; reachedEnd = false; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
         titleLabel.setText ("Layback Station", juce::dontSendNotification);
@@ -929,6 +948,11 @@ private:
     void loadProjectFromVar (const juce::var& root, const juce::File& baseDir)
     {
         newProject();
+
+        if ((int) root.getProperty ("version", 1) > 1)
+        { titleLabel.setText ("This project was saved by a newer version of Layback.", juce::dontSendNotification); return; }
+
+        int missingMedia = 0;
 
         auto resolve = [&] (const juce::String& rel) -> juce::File
         {
@@ -942,44 +966,54 @@ private:
                 auto grp = std::make_unique<VideoGroup>();
                 grp->name      = gv["name"].toString();
                 grp->file      = resolve (gv["video"].toString());
-                grp->duration  = (double) gv["duration"];
-                grp->expanded  = (bool)   gv["expanded"];
-                grp->videoMute = (bool)   gv["videoMute"];
-                grp->videoSolo = (bool)   gv["videoSolo"];
+                grp->duration  = (double) gv.getProperty ("duration", 0.0);
+                grp->expanded  = (bool)   gv.getProperty ("expanded", true);
+                grp->videoMute = (bool)   gv.getProperty ("videoMute", false);
+                grp->videoSolo = (bool)   gv.getProperty ("videoSolo", false);
                 grp->cutMarkers = varToDoubles (gv["cuts"]);
+                if (! grp->file.existsAsFile()) ++missingMedia;
 
                 if (auto* tarr = gv["tracks"].getArray())
                     for (auto& tv : *tarr)
                     {
                         const juce::File file = resolve (tv["file"].toString());
                         double len = 0.0;
-                        const int id = audioEngine.addTrack (file, len);
-                        if (id < 0) continue;
+                        const int id = audioEngine.addTrack (file, len);   // -1 if the media is missing/unreadable
 
                         auto tr = std::make_unique<AudioTrack>();
                         tr->name         = tv["name"].toString();
                         tr->file         = file;
-                        tr->engineId     = id;
-                        tr->sourceLength = (double) tv["sourceLength"]; if (tr->sourceLength <= 0.0) tr->sourceLength = len;
-                        tr->mute         = (bool) tv["mute"];
-                        tr->solo         = (bool) tv["solo"];
+                        tr->engineId     = id;          // keep the track even on failure so its edits survive a round-trip
+                        tr->sourceLength = (double) tv.getProperty ("sourceLength", 0.0); if (tr->sourceLength <= 0.0) tr->sourceLength = len;
+                        tr->mute         = (bool) tv.getProperty ("mute", false);
+                        tr->solo         = (bool) tv.getProperty ("solo", false);
                         tr->beatMarkers  = varToDoubles (tv["beats"]);
                         if (auto* carr = tv["clips"].getArray())
                             for (auto& cv : *carr)
                                 tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"] });
+                        if (tr->clips.empty() && tr->sourceLength > 0.0)
+                            tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 
-                        tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
-                        tr->thumb->addChangeListener (this);
-                        tr->thumb->setSource (new juce::FileInputSource (file));
+                        if (id < 0)
+                        {
+                            ++missingMedia;
+                        }
+                        else
+                        {
+                            tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
+                            tr->thumb->addChangeListener (this);
+                            tr->thumb->setSource (new juce::FileInputSource (file));
+                        }
                         grp->tracks.push_back (std::move (tr));
                     }
                 groups.push_back (std::move (grp));
             }
 
         timeline.setGroups (&groups);
-        loopEnabled = (bool)   root["loopEnabled"];
-        loopStart   = (double) root["loopStart"];
-        loopEnd     = (double) root["loopEnd"];
+        loopEnabled = (bool)   root.getProperty ("loopEnabled", false);
+        loopStart   = (double) root.getProperty ("loopStart", 0.0);
+        loopEnd     = (double) root.getProperty ("loopEnd", 0.0);
+        if (groups.empty()) { loopEnabled = false; loopStart = loopEnd = 0.0; }
         loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
 
         if (! groups.empty())
@@ -990,7 +1024,10 @@ private:
         }
         timeline.setLoop (loopEnabled, loopStart, loopEnd);
         resized(); timeline.repaint();
-        titleLabel.setText ("Opened: " + baseDir.getFileName(), juce::dontSendNotification);
+        if (missingMedia > 0)
+            titleLabel.setText ("Opened with " + juce::String (missingMedia) + " missing media file(s): " + baseDir.getFileName(), juce::dontSendNotification);
+        else
+            titleLabel.setText ("Opened: " + baseDir.getFileName(), juce::dontSendNotification);
     }
 
     void showProjectMenu()
