@@ -115,6 +115,7 @@ public:
     ~MainComponent() override
     {
         if (alive) *alive = false;   // in-flight ffmpeg worker callbacks bail instead of touching a dead window
+        removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
         timeline.setGroups (nullptr);
         for (auto& g : groups)
@@ -210,6 +211,7 @@ public:
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this, g] (const juce::FileChooser& fc)
             {
+                restoreKeyFocus();
                 const auto res = fc.getResult();
                 if (res.existsAsFile()) addTrackFromFile (g, res);
             });
@@ -448,6 +450,7 @@ private:
             {
                 if      (r == 1) splitTrackClip (g, t, tm);
                 else if (r == 2) deleteClip (g, t, c);
+                restoreKeyFocus();
             });
     }
 
@@ -458,6 +461,7 @@ private:
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc)
             {
+                restoreKeyFocus();
                 const auto res = fc.getResult();
                 if (res.existsAsFile()) addVideo (res);
             });
@@ -480,6 +484,7 @@ private:
                               | juce::FileBrowserComponent::warnAboutOverwriting,
             [this, videoFile, len] (const juce::FileChooser& fc)
             {
+                restoreKeyFocus();
                 const auto out = fc.getResult();
                 if (out == juce::File()) return;
 
@@ -564,6 +569,7 @@ private:
                               | juce::FileBrowserComponent::warnAboutOverwriting,
             [this, len] (const juce::FileChooser& fc)
             {
+                restoreKeyFocus();
                 const auto out = fc.getResult();
                 if (out == juce::File()) return;
                 pauseAll();
@@ -580,7 +586,7 @@ private:
         m.addItem (1, "Export video + audio (.mov)");
         m.addItem (2, "Export audio only (.wav)");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton),
-            [this] (int r) { if (r == 1) exportVideo(); else if (r == 2) exportAudio(); });
+            [this] (int r) { if (r == 1) exportVideo(); else if (r == 2) exportAudio(); restoreKeyFocus(); });
     }
 
     void setLoopRegion (double s, double e)
@@ -614,6 +620,7 @@ private:
                 if      (r == 1) setLoopRegion (0.0, vd);
                 else if (r == 2) setLoopRegion (t, vd);
                 else if (r == 3) clearLoop();
+                restoreKeyFocus();
             });
     }
 
@@ -650,7 +657,11 @@ private:
         {
             case LSCmd::TogglePlay: togglePlay(); return true;
             case LSCmd::Split:      if (validTrack (selGroup, selTrack)) splitTrackClip (selGroup, selTrack, playhead); return true;
-            case LSCmd::DeleteClip: if (validClip (selGroup, selTrack, selClip)) deleteClip (selGroup, selTrack, selClip); return true;
+            case LSCmd::DeleteClip:
+                if      (validClip (selGroup, selTrack, selClip)) deleteClip  (selGroup, selTrack, selClip);
+                else if (validTrack (selGroup, selTrack))         deleteTrack (selGroup, selTrack);
+                else if (validGroup (selGroup))                   deleteGroup (selGroup);
+                return true;
             case LSCmd::ToggleLoop: loopToggle.setToggleState (! loopToggle.getToggleState(), juce::dontSendNotification); toggleLoop(); return true;
             case LSCmd::ToggleSnap: snapToggle.setToggleState (! snapToggle.getToggleState(), juce::dontSendNotification); timeline.setSnapEnabled (snapToggle.getToggleState()); return true;
             case LSCmd::NudgeLeft:  nudgeSelected (-0.05); return true;
@@ -711,6 +722,7 @@ private:
                 else if (r == 2) applyKeyProfile (KeyProfile::Logic);
                 else if (r == 3) applyKeyProfile (KeyProfile::ProTools);
                 else if (r == 4) applyKeyProfile (KeyProfile::Ableton);
+                restoreKeyFocus();
             });
     }
 
@@ -745,15 +757,27 @@ private:
         {
             pauseAll();
             activeGroup = -1; selGroup = selTrack = selClip = -1;
+            playhead = 0.0; reachedEnd = false; lastMinLen = -1.0;
+            audioEngine.setPositionSeconds (0.0);
+            audioEngine.setMinLengthSeconds (0.0);
+            titleLabel.setText ("Layback Station", juce::dontSendNotification);
             timeline.setActiveGroup (-1);
             timeline.setSelection (-1, -1, -1);
+            timeline.setPlayhead (0.0);
         }
-        else
+        else if (g == activeGroup)            // deleted the active video -> reload another
         {
-            const int na = (g == activeGroup) ? juce::jmin (g, (int) groups.size() - 1)
-                                              : (activeGroup > g ? activeGroup - 1 : activeGroup);
-            activeGroup = -1;            // force a full reload
-            activateGroup (juce::jlimit (0, (int) groups.size() - 1, na));
+            const int na = juce::jmin (g, (int) groups.size() - 1);
+            activeGroup = -1;
+            activateGroup (na);
+        }
+        else                                   // deleted an inactive video -> just shift indices, don't disturb playback
+        {
+            if (activeGroup > g) --activeGroup;
+            if (selGroup > g) --selGroup;
+            else if (selGroup == g) { selGroup = selTrack = selClip = -1; }
+            timeline.setActiveGroup (activeGroup);
+            timeline.setSelection (selGroup, selTrack, selClip);
         }
         resized();
         timeline.repaint();
@@ -764,7 +788,7 @@ private:
         if (! validTrack (g, t)) return;
         juce::PopupMenu m;
         m.addItem (1, "Delete track");
-        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r) { if (r == 1) deleteTrack (g, t); });
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r) { if (r == 1) deleteTrack (g, t); restoreKeyFocus(); });
     }
 
     void showGroupMenu (int g)
@@ -772,10 +796,11 @@ private:
         if (! validGroup (g)) return;
         juce::PopupMenu m;
         m.addItem (1, "Delete video");
-        m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r) { if (r == 1) deleteGroup (g); });
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r) { if (r == 1) deleteGroup (g); restoreKeyFocus(); });
     }
 
     void parentHierarchyChanged() override { if (isShowing()) grabKeyboardFocus(); }
+    void restoreKeyFocus() { if (isShowing()) grabKeyboardFocus(); }   // reclaim focus after a menu/dialog so shortcuts keep working
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override { timeline.repaint(); }
 
