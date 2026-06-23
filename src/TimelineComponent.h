@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "Clip.h"
 #include "Track.h"
+#include "Skin.h"
 
 namespace juce { class AudioThumbnail; }
 
@@ -28,6 +29,7 @@ public:
     void setPlayhead (double seconds);
     void setLoop (bool enabled, double start, double end);
     void setSnapEnabled (bool b);
+    void setSkin (const Skin& s);
     int  contentHeight() const;   // total stacked height of all rows (for a scroll viewport)
 
     std::function<void (double)> onSeek;
@@ -92,7 +94,10 @@ private:
     bool      draggedClip = false;
 
     bool   loopEnabled = false; double loopStart = 0.0, loopEnd = 0.0;
-    bool   movedDuringLoop = false; double loopAnchor = 0.0;
+    bool   movedDuringLoop = false; double loopAnchor = 0.0, loopClickTime = 0.0;
+    bool   loopResizing = false;    // dragging an existing loop edge vs. creating a new region
+
+    Skin   skin = Skin::forDaw (Skin::Layback);
 
     static constexpr int headerW     = 184;
     static constexpr int rulerHeight = 22;

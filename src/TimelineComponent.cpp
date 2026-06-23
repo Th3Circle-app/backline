@@ -9,6 +9,11 @@ namespace
         const int total = (int) s;
         return juce::String::formatted ("%d:%02d", total / 60, total % 60);
     }
+
+    juce::Colour labelOn (juce::Colour fill)   // legible text/tick colour over a clip of this colour
+    {
+        return fill.getPerceivedBrightness() > 0.55f ? juce::Colours::black : juce::Colours::white;
+    }
 }
 
 //==============================================================================
@@ -23,6 +28,7 @@ void TimelineComponent::setPlayhead (double seconds)
 
 void TimelineComponent::setLoop (bool enabled, double start, double end) { loopEnabled = enabled; loopStart = start; loopEnd = end; repaint(); }
 void TimelineComponent::setSnapEnabled (bool b) { snapEnabled = b; }
+void TimelineComponent::setSkin (const Skin& s) { skin = s; repaint(); }
 
 //==============================================================================
 int TimelineComponent::numGroups() const { return groups != nullptr ? (int) groups->size() : 0; }
@@ -117,17 +123,19 @@ juce::Rectangle<int> TimelineComponent::disclosureRectAt (int rowYpos) const { r
 //==============================================================================
 void TimelineComponent::drawMS (juce::Graphics& g, int rowYpos, bool mute, bool solo)
 {
-    auto m = mBox (rowYpos), s = sBox (rowYpos);
-    g.setColour (mute ? juce::Colour (0xffd64545) : juce::Colour (0xff2a2d33));
-    g.fillRoundedRectangle (m.toFloat(), 3.0f);
-    g.setColour (mute ? juce::Colours::white : juce::Colour (0xff9aa0a6));
-    g.setFont (11.0f);
-    g.drawText ("M", m, juce::Justification::centred, false);
-
-    g.setColour (solo ? juce::Colour (0xffd9a441) : juce::Colour (0xff2a2d33));
-    g.fillRoundedRectangle (s.toFloat(), 3.0f);
-    g.setColour (solo ? juce::Colours::black : juce::Colour (0xff9aa0a6));
-    g.drawText ("S", s, juce::Justification::centred, false);
+    auto draw = [&] (juce::Rectangle<int> b, const char* txt, bool on, juce::Colour onCol, juce::Colour onTxt)
+    {
+        auto rf = b.toFloat();
+        g.setColour (on ? onCol : skin.control);
+        g.fillRoundedRectangle (rf, 3.5f);
+        g.setColour (on ? onCol.brighter (0.35f) : skin.control.brighter (0.2f));
+        g.drawRoundedRectangle (rf, 3.5f, 1.0f);
+        g.setColour (on ? onTxt : skin.muted);
+        g.setFont (11.0f);
+        g.drawText (txt, b, juce::Justification::centred, false);
+    };
+    draw (mBox (rowYpos), "M", mute, juce::Colour (0xffd64545), juce::Colours::white);
+    draw (sBox (rowYpos), "S", solo, juce::Colour (0xffd9a441), juce::Colours::black);
 }
 
 void TimelineComponent::paint (juce::Graphics& g)
@@ -135,10 +143,15 @@ void TimelineComponent::paint (juce::Graphics& g)
     const int w = getWidth();
     const int h = getHeight();
 
-    g.fillAll (juce::Colour (0xff0d0e11));
-    g.setColour (juce::Colour (0xff16181d));
+    g.fillAll (skin.windowBg);
+
+    // left header column — subtle vertical gradient
+    g.setGradientFill (juce::ColourGradient (skin.headerTop,    0.0f, 0.0f,
+                                             skin.headerBottom, 0.0f, (float) h, false));
     g.fillRect (0, 0, headerW, h);
-    g.setColour (juce::Colour (0xff1b1d22));
+
+    // ruler strip
+    g.setColour (skin.ruler);
     g.fillRect (headerW, 0, w - headerW, rulerHeight);
 
     const double tl = timelineLength();
@@ -153,14 +166,17 @@ void TimelineComponent::paint (juce::Graphics& g)
         for (double t = 0.0; t <= tl + 1.0e-6; t += step)
         {
             const int x = (int) xForTime (t);
-            g.setColour (juce::Colour (0xff26282e));
+            g.setColour (skin.ruler.brighter (0.10f));
             g.drawVerticalLine (x, (float) rulerHeight, (float) h);
-            g.setColour (juce::Colour (0xff3a3d44));
+            g.setColour (skin.muted.darker (0.2f));
             g.drawVerticalLine (x, (float) (rulerHeight - 6), (float) rulerHeight);
-            g.setColour (juce::Colour (0xff8a9099));
-            g.drawText (mmss (t), x + 3, 3, 52, rulerHeight - 5, juce::Justification::centredLeft, false);
+            g.setColour (skin.muted);
+            g.drawText (mmss (t), x + 4, 3, 52, rulerHeight - 5, juce::Justification::centredLeft, false);
         }
     }
+
+    g.setColour (skin.windowBg.darker (0.5f));   // ruler bottom border
+    g.fillRect (headerW, rulerHeight - 1, w - headerW, 1);
 
     const auto rows = buildRows();
     for (const auto& row : rows)
@@ -170,40 +186,70 @@ void TimelineComponent::paint (juce::Graphics& g)
             const auto* grp = (*groups)[(size_t) row.group].get();
             const bool active = (row.group == activeGroup);
 
-            g.setColour (active ? juce::Colour (0xff1a2230) : juce::Colour (0xff121419));
+            g.setColour (active ? skin.activeRow : skin.rowEven);
             g.fillRect (0, row.y, headerW, rowHeight);
-            if (active) { g.setColour (juce::Colour (0xff63b3ed)); g.fillRect (0, row.y, 3, rowHeight); }
+            g.setColour (active ? skin.activeStrip : skin.videoStrip);
+            g.fillRect (0, row.y, 3, rowHeight);
 
             auto dr = disclosureRectAt (row.y).toFloat();
-            g.setColour (juce::Colour (0xffb8bdc4));
+            g.setColour (skin.text.darker (0.1f));
             juce::Path tri;
             if (grp->expanded) tri.addTriangle (dr.getX(), dr.getY(), dr.getRight(), dr.getY(), dr.getCentreX(), dr.getBottom());
             else               tri.addTriangle (dr.getX(), dr.getY(), dr.getX(), dr.getBottom(), dr.getRight(), dr.getCentreY());
             g.fillPath (tri);
 
-            g.setColour (juce::Colours::white);
+            g.setColour (active ? skin.text : skin.text.darker (0.15f));
             g.setFont (12.0f);
             g.drawText ("VIDEO " + juce::String (row.group + 1), 28, row.y + 7, headerW - 90, 16, juce::Justification::centredLeft, true);
-            g.setColour (juce::Colour (0xff8a9099));
+            g.setColour (skin.muted);
             g.setFont (10.5f);
             g.drawText (grp->name, 28, row.y + 25, headerW - 36, 16, juce::Justification::centredLeft, true);
 
             drawMS (g, row.y, grp->videoMute, grp->videoSolo);
 
             auto clip = videoClipRectAt (row.y, grp->duration);
-            g.setColour (active ? juce::Colour (0xff2b6cb0) : juce::Colour (0xff24405e));
-            g.fillRoundedRectangle (clip, 4.0f);
-            g.setColour (juce::Colour (0xff63b3ed));
-            g.drawRoundedRectangle (clip, 4.0f, 1.0f);
+            if (clip.getWidth() > 1.0f)
+            {
+                const auto base = active ? skin.videoClip.brighter (0.12f) : skin.videoClip.darker (0.12f);
+                const float rad = skin.flatClips ? 3.0f : 4.0f;
+                if (skin.flatClips) { g.setColour (base); g.fillRoundedRectangle (clip, rad); }
+                else
+                {
+                    g.setGradientFill (juce::ColourGradient (base.brighter (0.10f), clip.getX(), clip.getY(),
+                                                             base.darker (0.18f),  clip.getX(), clip.getBottom(), false));
+                    g.fillRoundedRectangle (clip, rad);
+                }
+                g.setColour (base.brighter (0.30f));
+                g.drawRoundedRectangle (clip, rad, 1.0f);
+                if (clip.getWidth() > 64.0f)
+                {
+                    g.setColour (labelOn (base).withAlpha (0.85f));
+                    g.setFont (10.5f);
+                    g.drawText (grp->name, clip.toNearestInt().reduced (7, 3), juce::Justification::topLeft, true);
+                }
+
+                for (double cm : grp->cutMarkers)   // detected scene cuts, drawn only on this video's clip
+                {
+                    const int cx = (int) xForTime (cm);
+                    if (cx > headerW && (float) cx <= clip.getRight())
+                    {
+                        g.setColour (juce::Colour (0xcc33e0ff));
+                        g.drawVerticalLine (cx, clip.getY() + 1.0f, clip.getBottom() - 1.0f);
+                    }
+                }
+            }
         }
         else if (row.kind == Row::Audio)
         {
             const auto* grp = (*groups)[(size_t) row.group].get();
             const auto* t = grp->tracks[(size_t) row.track].get();
 
-            g.setColour ((row.track % 2 == 0) ? juce::Colour (0xff121419) : juce::Colour (0xff14161c));
+            g.setColour ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd);
             g.fillRect (0, row.y, headerW, rowHeight);
-            g.setColour (juce::Colours::white);
+            g.setColour (skin.audioStrip);     // audio track color strip
+            g.fillRect (0, row.y, 2, rowHeight);
+
+            g.setColour (skin.text);
             g.setFont (11.0f);
             g.drawText (t->name, 12, row.y + 7, headerW - 70, 32, juce::Justification::centredLeft, true);
 
@@ -213,58 +259,68 @@ void TimelineComponent::paint (juce::Graphics& g)
             {
                 const auto& c = t->clips[(size_t) j];
                 auto r = clipRectAt (row.y, c);
-                g.setColour (juce::Colour (0xff1f7a52));
-                g.fillRoundedRectangle (r, 4.0f);
+                const bool sel = (row.group == selGroup && row.track == selTrack && j == selClip);
+                const float rad = skin.flatClips ? 3.0f : 4.0f;
+
+                if (sel)   // soft selection glow
+                {
+                    g.setColour (skin.accent.withAlpha (0.45f));
+                    g.drawRoundedRectangle (r.expanded (2.0f), rad + 1.5f, 2.0f);
+                }
+                if (skin.flatClips) { g.setColour (skin.audioClip); g.fillRoundedRectangle (r, rad); }
+                else
+                {
+                    g.setGradientFill (juce::ColourGradient (skin.audioClip.brighter (0.12f), r.getX(), r.getY(),
+                                                             skin.audioClip.darker (0.18f),  r.getX(), r.getBottom(), false));
+                    g.fillRoundedRectangle (r, rad);
+                }
+
                 if (t->thumb != nullptr && t->thumb->getTotalLength() > 0.0)
                 {
-                    g.setColour (juce::Colour (0xffaef0cf));
+                    g.setColour (skin.waveform);
                     t->thumb->drawChannels (g, r.reduced (4.0f).toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
-                const bool sel = (row.group == selGroup && row.track == selTrack && j == selClip);
-                g.setColour (sel ? juce::Colour (0xffeafff4) : juce::Colour (0xff48c79a));
-                g.drawRoundedRectangle (r, 4.0f, sel ? 2.0f : 1.0f);
+
+                g.setColour (sel ? juce::Colours::white : skin.audioClip.brighter (0.30f));
+                g.drawRoundedRectangle (r, rad, sel ? 2.0f : 1.0f);
+
+                if (r.getWidth() > 52.0f)
+                {
+                    g.setColour (labelOn (skin.audioClip).withAlpha (0.80f));
+                    g.setFont (10.0f);
+                    g.drawText (t->name, r.toNearestInt().reduced (6, 2), juce::Justification::topLeft, true);
+                }
 
                 if (row.group == activeGroup)   // beat ticks
                     for (double b : t->beatMarkers)
                         if (b >= c.sourceIn && b <= c.sourceIn + c.duration)
                         {
                             const int bx = (int) xForTime (c.timelineStart + (b - c.sourceIn));
-                            g.setColour (juce::Colour (0x66ffffff));
+                            g.setColour (labelOn (skin.audioClip).withAlpha (0.45f));
                             g.drawVerticalLine (bx, (float) (r.getY() + 3), (float) (r.getBottom() - 3));
                         }
             }
         }
         else if (row.kind == Row::Import)
         {
-            g.setColour (juce::Colour (0xff16181d));
+            g.setColour (skin.headerBottom);
             g.fillRect (0, row.y, headerW, row.h);
-            g.setColour (juce::Colour (0xff5fae86));
+            g.setColour (skin.audioStrip.brighter (0.1f));
             g.setFont (12.0f);
             g.drawText ("+  Import Track", 24, row.y, headerW - 28, row.h, juce::Justification::centredLeft, false);
         }
         else // AddVideo
         {
-            g.setColour (juce::Colour (0xff1a1d22));
+            g.setColour (skin.panel);
             g.fillRect (0, row.y, w, row.h);
-            g.setColour (juce::Colour (0xff7aa7d6));
+            g.setColour (skin.videoStrip.brighter (0.1f));
             g.setFont (12.5f);
             g.drawText ("+  Add Video", 12, row.y, headerW - 16, row.h, juce::Justification::centredLeft, false);
         }
     }
 
-    g.setColour (juce::Colour (0xff05060a));
+    g.setColour (skin.windowBg.darker (0.5f));
     g.drawVerticalLine (headerW, 0.0f, (float) h);
-
-    if (const auto* ag = activeG())   // scene-cut markers (active group)
-        for (double cm : ag->cutMarkers)
-        {
-            const int cx = (int) xForTime (cm);
-            if (cx > headerW)
-            {
-                g.setColour (juce::Colour (0x9933e0ff));
-                g.drawVerticalLine (cx, (float) rulerHeight, (float) h);
-            }
-        }
 
     if (loopEnabled && loopEnd > loopStart && tl > 0.0)
     {
@@ -275,6 +331,8 @@ void TimelineComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xffffd166));
         g.drawVerticalLine (lx0, 0.0f, (float) h);
         g.drawVerticalLine (lx1, 0.0f, (float) h);
+        g.fillRect (lx0 - 2, 0, 4, rulerHeight);   // draggable edge handles
+        g.fillRect (lx1 - 2, 0, 4, rulerHeight);
     }
 
     if (tl > 0.0)
@@ -332,6 +390,20 @@ void TimelineComponent::seekFromMouse (const juce::MouseEvent& e)
 void TimelineComponent::mouseMove (const juce::MouseEvent& e)
 {
     if (e.x < headerW) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
+
+    if (e.y < rulerHeight)   // ruler: show a resize cursor when hovering an existing loop edge
+    {
+        if (loopEnabled && loopEnd > loopStart)
+        {
+            const double cur  = timeForX ((double) e.x);
+            const double pps  = pixelsPerSecond();
+            const double grab = (pps > 0.0) ? 7.0 / pps : 0.0;
+            if (std::abs (cur - loopEnd) <= grab || std::abs (cur - loopStart) <= grab)
+            { setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); return; }
+        }
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
 
     const auto rows = buildRows();
     for (const auto& row : rows)
@@ -406,7 +478,24 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
     {
         dragMode = Drag::Loop;
         movedDuringLoop = false;
-        loopAnchor = timeForX ((double) e.x);
+        loopResizing = false;
+        const double cur = timeForX ((double) e.x);
+
+        loopClickTime = cur;
+        if (loopEnabled && loopEnd > loopStart)   // grab the NEARER existing edge -> resize, keeping the far edge fixed
+        {
+            const double pps    = pixelsPerSecond();
+            const double grab   = (pps > 0.0) ? 7.0 / pps : 0.0;   // ~7px grab zone
+            const double dEnd   = std::abs (cur - loopEnd);
+            const double dStart = std::abs (cur - loopStart);
+            if (juce::jmin (dEnd, dStart) <= grab)
+            {
+                loopAnchor   = (dEnd <= dStart) ? loopStart : loopEnd;   // fix the far edge, drag the near one
+                loopResizing = true;
+                return;
+            }
+        }
+        loopAnchor = cur;   // otherwise start a fresh region from here
         return;
     }
 
@@ -468,9 +557,15 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
         {
             if (! movedDuringLoop) { movedDuringLoop = true; if (onEditBegin) onEditBegin(); }
             const double cur = timeForX ((double) e.x);
-            loopStart   = juce::jmin (loopAnchor, cur);
-            loopEnd     = juce::jmax (loopAnchor, cur);
-            loopEnabled = true;
+            double s = juce::jmin (loopAnchor, cur), en = juce::jmax (loopAnchor, cur);
+            const double minLen = 0.05;               // never collapse the region to zero
+            if (en - s < minLen)
+            {
+                if (cur >= loopAnchor) en = loopAnchor + minLen;
+                else                   s  = loopAnchor - minLen;
+                if (s < 0.0) { s = 0.0; en = juce::jmax (en, minLen); }
+            }
+            loopStart = s; loopEnd = en; loopEnabled = true;
             repaint();
             if (onLoopChanged) onLoopChanged (true, loopStart, loopEnd);
         }
@@ -521,7 +616,8 @@ void TimelineComponent::mouseUp (const juce::MouseEvent&)
     if (dragMode == Drag::Loop)
     {
         dragMode = Drag::None;
-        if (! movedDuringLoop) { playhead = loopAnchor; repaint(); if (onSeek) onSeek (loopAnchor); }
+        if (! movedDuringLoop) { playhead = loopClickTime; repaint(); if (onSeek) onSeek (loopClickTime); }
+        loopResizing = false;
         return;
     }
 

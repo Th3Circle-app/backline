@@ -10,6 +10,7 @@
 #include "FfmpegTool.h"
 #include "Clip.h"
 #include "Track.h"
+#include "LaybackLookAndFeel.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -39,6 +40,9 @@ class MainComponent : public juce::Component,
 public:
     MainComponent()
     {
+        setLookAndFeel (&laf);
+        juce::LookAndFeel::setDefaultLookAndFeel (&laf);   // theme popup menus too
+
         addAndMakeVisible (video);
 
         openButton.setButtonText ("Add Video...");
@@ -64,11 +68,15 @@ public:
         exportButton.onClick = [this] { showExportMenu(); };
         addAndMakeVisible (exportButton);
 
-        timeLabel.setJustificationType (juce::Justification::centredRight);
-        timeLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+        timeLabel.setJustificationType (juce::Justification::centred);
+        timeLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 15.0f, juce::Font::plain)));
+        timeLabel.setColour (juce::Label::textColourId,       juce::Colour (0xff8fd6ff));
+        timeLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff0b0d11));
+        timeLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2b303b));
         addAndMakeVisible (timeLabel);
 
         titleLabel.setText ("Layback Station", juce::dontSendNotification);
+        titleLabel.setFont (juce::Font (juce::FontOptions().withHeight (14.0f)));
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xff9aa0a6));
         addAndMakeVisible (titleLabel);
 
@@ -89,6 +97,7 @@ public:
         timeline.onAddVideo      = [this] { openAddVideo(); };
         timeline.onLoopChanged   = [this] (bool en, double s, double e)
         {
+            if (en && e <= s) { en = false; s = e = 0.0; }   // never store a degenerate loop as enabled
             loopEnabled = en; loopStart = s; loopEnd = e;
             loopToggle.setToggleState (en, juce::dontSendNotification);
         };
@@ -132,6 +141,8 @@ public:
 
     ~MainComponent() override
     {
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+        setLookAndFeel (nullptr);
         if (alive) *alive = false;   // in-flight ffmpeg worker callbacks bail instead of touching a dead window
         removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
@@ -274,7 +285,30 @@ public:
         timeline.repaint();
     }
 
-    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff121317)); }
+    void paint (juce::Graphics& g) override
+    {
+        const auto& s = laf.skin;
+        g.fillAll (s.windowBg);
+
+        // transport toolbar strip
+        if (! transportBand.isEmpty())
+        {
+            g.setColour (s.panel);
+            g.fillRect (transportBand);
+            g.setColour (s.windowBg.darker (0.5f));
+            g.fillRect (transportBand.getX(), transportBand.getY(), transportBand.getWidth(), 1);
+            g.fillRect (transportBand.getX(), transportBand.getBottom() - 1, transportBand.getWidth(), 1);
+        }
+
+        // framed viewer: black matte + thin border behind the AV surface
+        if (! viewerFrame.isEmpty())
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (viewerFrame.expanded (2));
+            g.setColour (s.control);
+            g.drawRect (viewerFrame.expanded (2), 1);
+        }
+    }
 
     void resized() override
     {
@@ -286,8 +320,10 @@ public:
         r.removeFromBottom (8);
 
         auto controls = r.removeFromBottom (40);
+        transportBand = { 0, controls.getY() - 6, getWidth(), controls.getHeight() + 12 };
         r.removeFromBottom (8);
         video.setBounds (r);
+        viewerFrame = r;
 
         openButton.setBounds (controls.removeFromLeft (104));
         controls.removeFromLeft (8);
@@ -740,7 +776,39 @@ private:
             default:                   add (LSCmd::Split, "S");           add (LSCmd::ToggleLoop, "L");                   add (LSCmd::ToggleSnap, "N"); break;
         }
         keysButton.setButtonText ("Keys: " + profileName (p));
+        applySkinForProfile (p);   // switching the station also reskins the app to that DAW
         grabKeyboardFocus();
+    }
+
+    void applySkinForProfile (KeyProfile p)
+    {
+        Skin::Daw d = Skin::Layback;
+        switch (p)
+        {
+            case KeyProfile::Logic:    d = Skin::Logic;    break;
+            case KeyProfile::ProTools: d = Skin::ProTools; break;
+            case KeyProfile::Ableton:  d = Skin::Ableton;  break;
+            default:                   d = Skin::Layback;  break;
+        }
+        laf.applySkin (Skin::forDaw (d));
+        timeline.setSkin (laf.skin);
+        applyControlColours();
+    }
+
+    void applyControlColours()
+    {
+        const auto& s = laf.skin;
+        timeLabel.setColour (juce::Label::textColourId,       s.timecodeText);
+        timeLabel.setColour (juce::Label::backgroundColourId, s.timecodeBg);
+        timeLabel.setColour (juce::Label::outlineColourId,    s.control);
+        titleLabel.setColour (juce::Label::textColourId,      s.muted);
+        loopToggle.setColour (juce::ToggleButton::textColourId, s.text);
+        snapToggle.setColour (juce::ToggleButton::textColourId, s.text);
+        if (auto* win = findParentComponentOfClass<juce::ResizableWindow>())   // restyle the window chrome too
+        { win->setBackgroundColour (s.windowBg); win->repaint(); }
+        sendLookAndFeelChange();   // children re-read the themed colour IDs
+        repaint();
+        timeline.repaint();
     }
 
     void showKeysMenu()
@@ -1210,6 +1278,7 @@ private:
     // Declaration order for teardown: track thumbnails reference audioEngine's
     // format manager + thumbnailCache (declared first); timeline reads &groups
     // (declared before timeline).
+    LaybackLookAndFeel laf;   // declared first -> destroyed last (after every component that uses it)
     VideoView video;
     AudioEngine audioEngine;
     juce::AudioThumbnailCache thumbnailCache { 32 };
@@ -1223,6 +1292,7 @@ private:
     KeyProfile keyProfile = KeyProfile::Layback;
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
+    juce::Rectangle<int> transportBand, viewerFrame;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
