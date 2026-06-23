@@ -32,7 +32,12 @@ public:
     void clearTracks();
 
     void setTrackClips (int trackId, const std::vector<AudioClip>& clips);
-    void setTrackGain  (int trackId, float gain);
+    void setTrackGain  (int trackId, float gain);   // post-fader/mute gain (Main folds in track volume)
+    void setTrackPan   (int trackId, float pan);    // -1..+1
+    void  setMasterGain (float g);
+    float getMasterGain() const;
+    float getTrackPeak  (int trackId);              // last block's post-fader peak (0..1+), for meters
+    float getMasterPeak() const;
 
     //== Per-track effect chain (native built-ins + hosted AU/VST3 plugins) ==
     juce::AudioPluginFormatManager& getPluginFormats() { return pluginFormats; }
@@ -73,6 +78,8 @@ private:
         juce::AudioBuffer<float> audio;     // at device rate
         std::vector<AudioClip>   clips;
         std::atomic<float>       gain { 1.0f };
+        std::atomic<float>       pan  { 0.0f };
+        std::atomic<float>       peak { 0.0f };   // post-fader peak of the last block (for the meter)
         std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
     };
 
@@ -99,6 +106,8 @@ private:
         double minLengthSeconds = 0.0;
         juce::AudioBuffer<float> scratch;         // reused per-track render buffer (no realtime alloc)
         std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
+        std::atomic<float> masterGain { 1.0f };
+        std::atomic<float> masterPeak { 0.0f };
     };
 
     static juce::AudioBuffer<float> resampleBuffer (const juce::AudioBuffer<float>& in, double inRate, double outRate);

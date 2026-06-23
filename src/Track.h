@@ -16,8 +16,10 @@ struct AudioTrack
     int          engineId     = -1;
     double       sourceLength  = 0.0;
     std::vector<AudioClip> clips;
-    bool mute = false;
-    bool solo = false;
+    bool  mute = false;
+    bool  solo = false;
+    float volume = 1.0f;               // channel fader, linear (0 .. ~1.4)
+    float pan    = 0.0f;               // -1 = hard left .. +1 = hard right
     std::vector<double> beatMarkers;   // onset times within the source (seconds)
     std::unique_ptr<juce::AudioThumbnail> thumb;
 };

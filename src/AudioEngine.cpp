@@ -120,11 +120,46 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 if (p != nullptr) p->processBlock (proxy, midi);
         }
 
-        // 3) sum into the output at the post-FX channel gain (mute/solo)
+        // post-fader peak for the channel meter
+        float pk = 0.0f;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float* d = scratch.getReadPointer (ch);
+            for (int i = 0; i < n; ++i) pk = juce::jmax (pk, std::abs (d[i]));
+        }
+        t->peak.store (pk * g, std::memory_order_relaxed);
+
+        // 3) sum into the output with channel gain + pan
         if (g > 0.0001f)
-            for (int ch = 0; ch < numCh; ++ch)
-                info.buffer->addFrom (ch, info.startSample, scratch, ch, 0, n, g);
+        {
+            if (numCh >= 2)
+            {
+                const float p  = juce::jlimit (-1.0f, 1.0f, t->pan.load());
+                const float lg = g * (p <= 0.0f ? 1.0f : 1.0f - p);
+                const float rg = g * (p >= 0.0f ? 1.0f : 1.0f + p);
+                info.buffer->addFrom (0, info.startSample, scratch, 0, 0, n, lg);
+                info.buffer->addFrom (1, info.startSample, scratch, 1, 0, n, rg);
+                for (int ch = 2; ch < numCh; ++ch)
+                    info.buffer->addFrom (ch, info.startSample, scratch, ch, 0, n, g);
+            }
+            else
+            {
+                info.buffer->addFrom (0, info.startSample, scratch, 0, 0, n, g);
+            }
+        }
     }
+
+    const float mg = masterGain.load();                 // master fader
+    if (! juce::approximatelyEqual (mg, 1.0f))
+        info.buffer->applyGain (info.startSample, n, mg);
+
+    float mpk = 0.0f;                                   // master meter
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        const float* d = info.buffer->getReadPointer (ch, info.startSample);
+        for (int i = 0; i < n; ++i) mpk = juce::jmax (mpk, std::abs (d[i]));
+    }
+    masterPeak.store (mpk, std::memory_order_relaxed);
 
     pos.store (blockStart + n, std::memory_order_relaxed);
 }
@@ -275,6 +310,23 @@ void AudioEngine::setTrackGain (int trackId, float gain)
 {
     const juce::ScopedLock sl (mixer.lock);
     if (auto* t = findTrack (trackId)) t->gain.store (gain);
+}
+
+void AudioEngine::setTrackPan (int trackId, float pan)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId)) t->pan.store (juce::jlimit (-1.0f, 1.0f, pan));
+}
+
+void  AudioEngine::setMasterGain (float g)    { mixer.masterGain.store (juce::jmax (0.0f, g)); }
+float AudioEngine::getMasterGain() const      { return mixer.masterGain.load(); }
+float AudioEngine::getMasterPeak() const      { return mixer.masterPeak.load(); }
+
+float AudioEngine::getTrackPeak (int trackId)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId)) return t->peak.load();
+    return 0.0f;
 }
 
 void AudioEngine::setMinLengthSeconds (double seconds)

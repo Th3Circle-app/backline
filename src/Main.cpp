@@ -11,6 +11,7 @@
 #include "Clip.h"
 #include "Track.h"
 #include "LaybackLookAndFeel.h"
+#include "MixerView.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -119,8 +120,8 @@ public:
         timeline.onClipSelected  = [this] (int g, int t, int c) { selGroup = g; selTrack = t; selClip = c; timeline.setSelection (g, t, c); };
         timeline.onToggleExpand  = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->expanded = ! groups[(size_t) g]->expanded; resized(); timeline.repaint(); } };
         timeline.onImportTrack   = [this] (int g) { importTrack (g); };
-        timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); } };
-        timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); } };
+        timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
+        timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
         timeline.onVideoMute     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoMute = ! groups[(size_t) g]->videoMute; applyMixGains(); timeline.repaint(); } };
         timeline.onVideoSolo     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoSolo = ! groups[(size_t) g]->videoSolo; applyMixGains(); timeline.repaint(); } };
         timeline.onActivateGroup = [this] (int g) { activateGroup (g); };
@@ -138,6 +139,16 @@ public:
         timelineViewport.setViewedComponent (&timeline, false);
         timelineViewport.setScrollBarsShown (true, false);
         addAndMakeVisible (timelineViewport);
+
+        mixerView.setEngine (&audioEngine);
+        mixerView.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; applyMixGains(); } };
+        mixerView.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.pan = p; audioEngine.setTrackPan (tr.engineId, p); } };
+        mixerView.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); } };
+        mixerView.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); } };
+        mixerView.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
+        mixerView.onSelect = [this] (int g, int t) { selGroup = g; selTrack = t; selClip = -1; timeline.setSelection (g, t, -1); };
+        mixerView.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
+        addChildComponent (mixerView);   // shown when toggled
 
         keysButton.onClick = [this] { showKeysMenu(); };
         addAndMakeVisible (keysButton);
@@ -267,6 +278,7 @@ public:
         timeline.setActiveGroup (g);
         timeline.setSelection (g, -1, -1);
         timeline.setPlayhead (0.0);
+        refreshMixer();
         resized();
         timeline.repaint();
     }
@@ -317,6 +329,7 @@ public:
         selGroup = g; selTrack = (int) groups[(size_t) g]->tracks.size() - 1; selClip = 0;
         clearHistory();
         applyMixGains();
+        refreshMixer();
         timeline.setSelection (selGroup, selTrack, selClip);
         resized();
         timeline.repaint();
@@ -364,6 +377,8 @@ public:
         auto r = getLocalBounds().reduced (12);
         titleLabel.setBounds (r.removeFromTop (22));
         r.removeFromTop (6);
+
+        if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
 
         timelineViewport.setBounds (r.removeFromBottom (340));
         r.removeFromBottom (8);
@@ -419,6 +434,7 @@ public:
         viewerFrame = video.getBounds();
 
         area.removeFromTop (4);
+        if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
         timelineViewport.setBounds (area);
         updateTimelineSize();
     }
@@ -443,6 +459,8 @@ public:
 
         auto status = area.removeFromTop (16);
         titleLabel.setBounds (status.reduced (10, 0));
+
+        if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (200)); area.removeFromBottom (4); }
 
         auto viewerCol = area.removeFromRight (juce::jlimit (260, 460, area.getWidth() / 3));
         video.setBounds (viewerCol.reduced (8, 6).removeFromTop (juce::jmax (140, juce::jmin (260, viewerCol.getHeight() / 2))));
@@ -498,7 +516,7 @@ private:
         for (auto& t : ag->tracks)
         {
             const bool aud = ! t->mute && (! anySolo || t->solo);
-            audioEngine.setTrackGain (t->engineId, aud ? 1.0f : 0.0f);
+            audioEngine.setTrackGain (t->engineId, aud ? t->volume : 0.0f);   // fold in the channel fader
         }
     }
 
@@ -918,10 +936,21 @@ private:
         snapToggle.setColour (juce::ToggleButton::textColourId, s.text);
         if (auto* win = findParentComponentOfClass<juce::ResizableWindow>())   // restyle the window chrome too
         { win->setBackgroundColour (s.windowBg); win->repaint(); }
+        mixerView.setSkin (s);
         resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
         timeline.repaint();
+    }
+
+    void refreshMixer() { if (mixerVisible) mixerView.setModel (&groups, activeGroup); }
+
+    void toggleMixer()
+    {
+        mixerVisible = ! mixerVisible;
+        mixerView.setVisible (mixerVisible);
+        if (mixerVisible) { mixerView.setSkin (laf.skin); mixerView.setModel (&groups, activeGroup); }
+        resized();
     }
 
     //==========================================================================
@@ -1024,6 +1053,8 @@ private:
         }
         else if (name == "View")
         {
+            m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
+            m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
             m.addSeparator();
@@ -1039,6 +1070,7 @@ private:
         }
         else if (name == "Window")
         {
+            m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
             m.addItem (9040, "Close All Plugin Windows", ! pluginWindows.empty());
         }
         else if (name == "Help")
@@ -1068,6 +1100,7 @@ private:
             case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
             case 9030: seekAll (0.0); break;
             case 9040: closeAllPluginWindows(); break;
+            case 9050: toggleMixer(); break;
             default: break;
         }
     }
@@ -1101,6 +1134,7 @@ private:
         closePluginWindowsForTrack (tr->engineId);
         audioEngine.removeTrack (tr->engineId);
         groups[(size_t) g]->tracks.erase (groups[(size_t) g]->tracks.begin() + t);
+        refreshMixer();
         if (selGroup == g) { if (selTrack == t) { selTrack = -1; selClip = -1; } else if (selTrack > t) --selTrack; }
         applyMixGains();
         timeline.setSelection (selGroup, selTrack, selClip);
@@ -1523,6 +1557,7 @@ private:
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
         titleLabel.setText ("Layback Station", juce::dontSendNotification);
+        refreshMixer();
         resized(); timeline.repaint();
     }
 
@@ -1631,6 +1666,8 @@ private:
 
     void timerCallback() override
     {
+        if (mixerVisible) mixerView.updateMeters();
+
         const double vdur = videoDur();
         auto* ag = activeGroupPtr();
         if (vdur > 0.0 && ag != nullptr && ! juce::approximatelyEqual (ag->duration, vdur))
@@ -1713,6 +1750,9 @@ private:
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;
     bool pluginsScanned = false;
+
+    MixerView mixerView;
+    bool      mixerVisible = false;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
