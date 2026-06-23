@@ -349,8 +349,13 @@ public:
 
     void resized() override
     {
-        if (laf.skin.layout == 1) { layoutLogic(); return; }
-        layoutDefault();
+        switch (laf.skin.layout)
+        {
+            case 1: layoutStacked (52, 240); break;   // Logic
+            case 3: layoutStacked (58, 280); break;   // Pro Tools: taller bar, bigger counter
+            case 2: layoutAbleton();         break;   // Ableton: video docked right
+            default: layoutDefault();        break;   // Layback
+        }
     }
 
     // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
@@ -387,14 +392,14 @@ public:
         updateTimelineSize();
     }
 
-    // Logic orientation: full-width top control bar (transport left, centered LCD,
-    // file/export right), a status line, a docked "movie" strip, timeline fills the rest.
-    void layoutLogic()
+    // Stacked DAW layout (Logic / Pro Tools): top control bar (transport left,
+    // centered counter, file/export right), status line, docked movie strip, timeline below.
+    void layoutStacked (int barH, int counterW)
     {
         auto area = getLocalBounds();
-        transportBand = area.removeFromTop (52);            // paint() fills this as the control bar
+        transportBand = area.removeFromTop (barH);          // paint() fills this as the control bar
 
-        auto b = transportBand.reduced (10, 9);
+        auto b = transportBand.reduced (10, juce::jmax (6, (barH - 34) / 2));
         playButton.setBounds (b.removeFromLeft (64)); b.removeFromLeft (6);
         loopToggle.setBounds (b.removeFromLeft (56)); b.removeFromLeft (6);
         snapToggle.setBounds (b.removeFromLeft (52));
@@ -404,7 +409,7 @@ public:
         projectButton.setBounds (b.removeFromRight (80));  b.removeFromRight (6);
         openButton.setBounds    (b.removeFromRight (104)); b.removeFromRight (12);
 
-        timeLabel.setBounds (b.withSizeKeepingCentre (juce::jmax (120, juce::jmin (240, b.getWidth())), b.getHeight()));
+        timeLabel.setBounds (b.withSizeKeepingCentre (juce::jmax (120, juce::jmin (counterW, b.getWidth())), b.getHeight()));
 
         auto status = area.removeFromTop (18);
         titleLabel.setBounds (status.reduced (10, 0));
@@ -414,6 +419,35 @@ public:
         viewerFrame = video.getBounds();
 
         area.removeFromTop (4);
+        timelineViewport.setBounds (area);
+        updateTimelineSize();
+    }
+
+    // Ableton layout: thin flat top bar (transport + clock on the left), the
+    // arrangement/timeline fills the window, video docked as a right-hand panel.
+    void layoutAbleton()
+    {
+        auto area = getLocalBounds();
+        transportBand = area.removeFromTop (46);
+
+        auto b = transportBand.reduced (10, 7);
+        playButton.setBounds (b.removeFromLeft (58)); b.removeFromLeft (8);
+        timeLabel.setBounds  (b.removeFromLeft (168)); b.removeFromLeft (10);   // clock beside the transport
+        loopToggle.setBounds (b.removeFromLeft (54)); b.removeFromLeft (6);
+        snapToggle.setBounds (b.removeFromLeft (50));
+
+        exportButton.setBounds  (b.removeFromRight (84));  b.removeFromRight (6);
+        keysButton.setBounds    (b.removeFromRight (120)); b.removeFromRight (6);
+        projectButton.setBounds (b.removeFromRight (78));  b.removeFromRight (6);
+        openButton.setBounds    (b.removeFromRight (100));
+
+        auto status = area.removeFromTop (16);
+        titleLabel.setBounds (status.reduced (10, 0));
+
+        auto viewerCol = area.removeFromRight (juce::jlimit (260, 460, area.getWidth() / 3));
+        video.setBounds (viewerCol.reduced (8, 6).removeFromTop (juce::jmax (140, juce::jmin (260, viewerCol.getHeight() / 2))));
+        viewerFrame = video.getBounds();
+        area.removeFromRight (4);
         timelineViewport.setBounds (area);
         updateTimelineSize();
     }
@@ -877,6 +911,8 @@ private:
         timeLabel.setColour (juce::Label::textColourId,       s.timecodeText);
         timeLabel.setColour (juce::Label::backgroundColourId, s.timecodeBg);
         timeLabel.setColour (juce::Label::outlineColourId,    s.control);
+        timeLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
+                                       keyProfile == KeyProfile::ProTools ? 19.0f : 15.0f, juce::Font::plain)));
         titleLabel.setColour (juce::Label::textColourId,      s.muted);
         loopToggle.setColour (juce::ToggleButton::textColourId, s.text);
         snapToggle.setColour (juce::ToggleButton::textColourId, s.text);

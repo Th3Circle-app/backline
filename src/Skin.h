@@ -46,7 +46,7 @@ struct Skin
                 s.videoClip = juce::Colour (0xff2f6f8f); s.videoStrip = juce::Colour (0xff47a0c4);
                 s.audioClip = juce::Colour (0xff1f8f6f); s.audioStrip = juce::Colour (0xff27c79a);
                 s.waveform = juce::Colour (0xffaef0d6); s.timecodeText = juce::Colour (0xff36e0a8); s.timecodeBg = juce::Colour (0xff0a0a0a);
-                s.flatClips = false; s.buttonLook = 2; s.buttonRadius = 3.0f; break;   // beveled
+                s.flatClips = false; s.buttonLook = 2; s.buttonRadius = 3.0f; s.layout = 3; break;   // beveled + big-counter top bar
 
             case Ableton:   // medium grey, orange accent, FLAT clips with dark waveforms
                 s.name = "Ableton Live";
@@ -58,7 +58,7 @@ struct Skin
                 s.videoClip = juce::Colour (0xff5aa0d0); s.videoStrip = juce::Colour (0xff7ab8e0);
                 s.audioClip = juce::Colour (0xffe0913d); s.audioStrip = juce::Colour (0xfff0a955);
                 s.waveform = juce::Colour (0xff3a2a14); s.timecodeText = juce::Colour (0xffffb968); s.timecodeBg = juce::Colour (0xff1e1e1e);
-                s.flatClips = true; s.buttonLook = 3; s.buttonRadius = 2.0f; break;    // flat
+                s.flatClips = true; s.buttonLook = 3; s.buttonRadius = 2.0f; s.layout = 2; break;    // flat + video docked right
 
             case Layback:
             default:        // our own: deep blue-black, blue accent, blue/green clips
