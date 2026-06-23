@@ -175,7 +175,34 @@ void TimelineComponent::paint (juce::Graphics& g)
     const double tl = timelineLength();
 
     // ruler ticks (only meaningful when a group is active)
-    if (tl > 0.0)
+    if (tl > 0.0 && skin.barsRuler)
+    {
+        const double barLen = 2.0;                              // 120 BPM, 4/4 -> 1 bar = 2 s
+        const double pps    = pixelsPerSecond();
+        const int    every  = (pps * barLen < 26.0) ? 2 : 1;   // label every other bar when zoomed out
+        g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
+        int bar = 0;
+        for (double t = 0.0; t <= tl + 1.0e-6; t += barLen, ++bar)
+        {
+            const int x = (int) xForTime (t);
+            g.setColour (skin.windowBg.brighter (0.05f));      // faint bar gridline down the lanes
+            g.drawVerticalLine (x, (float) rulerHeight, (float) h);
+            g.setColour (skin.ruler.darker (0.45f));           // bar tick
+            g.drawVerticalLine (x, (float) (rulerHeight - 8), (float) rulerHeight);
+            for (int bt = 1; bt < 4; ++bt)                     // beat ticks
+            {
+                const int bx = (int) xForTime (t + barLen * bt / 4.0);
+                g.setColour (skin.ruler.darker (0.25f));
+                g.drawVerticalLine (bx, (float) (rulerHeight - 4), (float) rulerHeight);
+            }
+            if (bar % every == 0)
+            {
+                g.setColour (juce::Colour (0xffd2d2d2));
+                g.drawText (juce::String (bar + 1), x + 3, 2, 40, rulerHeight - 4, juce::Justification::centredLeft, false);
+            }
+        }
+    }
+    else if (tl > 0.0)
     {
         const double niceSteps[] = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600 };
         double step = niceSteps[(int) (sizeof (niceSteps) / sizeof (double)) - 1];
@@ -344,7 +371,7 @@ void TimelineComponent::paint (juce::Graphics& g)
                 const auto& c = t->clips[(size_t) j];
                 auto r = clipRectAt (row.y, c);
                 const bool sel = (row.group == selGroup && row.track == selTrack && j == selClip);
-                const float rad = skin.flatClips ? 2.5f : 4.0f;
+                const float rad = skin.logicHeaders ? 2.0f : (skin.flatClips ? 2.5f : 4.0f);
 
                 // selected regions get the skin's selection fill/outline (Logic: blue body + yellow border);
                 // unselected stay the neutral region colour with a contrasting waveform.

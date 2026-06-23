@@ -19,6 +19,7 @@ struct Skin
     bool      clipTitleBar = false;  // draw a region name strip atop each clip (DAW regions)
     bool      tintLanes = false;     // tint the whole lane with the track colour (Pro Tools)
     bool      logicHeaders = false;  // Logic-style track headers (colour icon + name + M/S/R bottom row)
+    bool      barsRuler = false;     // bars/beats ruler (Logic) vs min:sec
     juce::Colour clipSelFill;                              // selected-region fill (transparent => brighten base)
     juce::Colour clipSelOutline = juce::Colours::white;    // selected-region outline
     juce::Colour playhead = juce::Colour (0xffff5a3c);     // playhead line colour
@@ -58,7 +59,7 @@ struct Skin
                 s.waveform = juce::Colour (0xff92befa); s.timecodeText = juce::Colour (0xffece7c9); s.timecodeBg = juce::Colour (0xff2b2a22);
                 s.flatClips = false; s.buttonLook = 1; s.buttonRadius = 5.0f; s.layout = 1;
                 s.clipTitleBar = true; s.clipSelFill = juce::Colour (0xff476ea6); s.clipSelOutline = juce::Colour (0xfff7d648);
-                s.playhead = juce::Colour (0xfffbec98); s.logicHeaders = true; break;
+                s.playhead = juce::Colour (0xfffbec98); s.logicHeaders = true; s.barsRuler = true; break;
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms
                 s.name = "Pro Tools";

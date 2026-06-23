@@ -21,6 +21,8 @@ public:
         if (primary != lcdMain || secondary != lcdSub) { lcdMain = primary; lcdSub = secondary; repaint(); }
     }
 
+    void setMasterLevel (float v) { const float c = juce::jlimit (0.0f, 1.0f, v); masterL = juce::jmax (c, masterL * 0.8f); repaint(); }
+
     void resized() override
     {
         const int d = 26, gap = 5, cy = getHeight() / 2;
@@ -28,6 +30,12 @@ public:
         for (int i = 0; i < 5; ++i) { btn[i] = { bx, cy - d / 2, d, d }; bx += d + gap; }
         bx += 10;
         lcd = { bx, cy - 18, 200, 36 };
+
+        int lx = 10;                                   // left view/tool cluster
+        for (int i = 0; i < 6; ++i) { leftBtns[i] = { lx, cy - 12, 22, 24 }; lx += 24; if (i == 3) lx += 8; }
+        int rx = getWidth() - 10;                       // master meter + right cluster
+        meterRect = { rx - 26, cy - 16, 26, 32 }; rx -= 34;
+        for (int i = 0; i < 4; ++i) { rx -= 22; rightBtns[i] = { rx, cy - 12, 20, 24 }; rx -= 3; }
     }
 
     void paint (juce::Graphics& g) override
@@ -40,6 +48,35 @@ public:
         g.fillAll (barBg);
         g.setColour (juce::Colour (0xff000000));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
+
+        auto chip = [&] (juce::Rectangle<int> b)        // a flat toolbar button
+        {
+            auto rf = b.toFloat();
+            g.setColour (juce::Colour (0xffaeaeae));
+            g.fillRoundedRectangle (rf, 4.0f);
+            g.setColour (juce::Colours::black.withAlpha (0.25f));
+            g.drawRoundedRectangle (rf, 4.0f, 1.0f);
+            g.setColour (juce::Colour (0xff4c4c4c));
+            g.fillRect ((float) b.getCentreX() - 5.0f, (float) b.getCentreY() - 1.0f, 10.0f, 2.0f);
+        };
+        for (auto& b : leftBtns)  chip (b);
+        for (auto& b : rightBtns) chip (b);
+
+        {                                               // master output meter (stereo bars)
+            auto m = meterRect;
+            g.setColour (juce::Colour (0xff2b2a22));
+            g.fillRoundedRectangle (m.toFloat(), 3.0f);
+            auto col = m.reduced (3);
+            const int bw = (col.getWidth() - 3) / 2;
+            const juce::Colour mc = masterL > 0.9f ? juce::Colours::red
+                                  : masterL > 0.66f ? juce::Colour (0xffe0b020) : juce::Colour (0xff4ad07a);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int hh = (int) ((float) col.getHeight() * masterL);
+                g.setColour (mc);
+                g.fillRect (col.getX() + ch * (bw + 3), col.getBottom() - hh, bw, hh);
+            }
+        }
 
         const bool playing = isPlaying && isPlaying();
         const bool cyc     = isCycle && isCycle();
@@ -114,6 +151,7 @@ public:
 
 private:
     Skin skin = Skin::forDaw (Skin::Logic);
-    juce::Rectangle<int> btn[5], lcd;
+    juce::Rectangle<int> btn[5], lcd, leftBtns[6], rightBtns[4], meterRect;
+    float masterL = 0.0f;
     juce::String lcdMain { "0:00.00" }, lcdSub;
 };

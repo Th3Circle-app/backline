@@ -1888,6 +1888,7 @@ private:
 
         timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
         logicBar.setPosition (formatTime (playhead), formatTime (timelineLength()));
+        logicBar.setMasterLevel (audioEngine.getMasterPeak());
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
     }
