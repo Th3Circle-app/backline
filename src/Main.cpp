@@ -14,6 +14,7 @@
 #include "MixerView.h"
 #include "LogicControlBar.h"
 #include "LogicInspector.h"
+#include "ProToolsControlBar.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -131,6 +132,15 @@ public:
         logicInspector.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         logicInspector.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
         addChildComponent (logicInspector);
+
+        ptBar.onRewind = [this] { seekAll (0.0); };
+        ptBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
+        ptBar.onPlay   = [this] { togglePlay(); };
+        ptBar.onRecord = [this] { /* recording is Phase C */ };
+        ptBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
+        ptBar.isPlaying = [this] { return playing; };
+        ptBar.isLoop    = [this] { return loopEnabled; };
+        addChildComponent (ptBar);
 
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
@@ -473,28 +483,32 @@ public:
         switch (laf.skin.layout)
         {
             case 1: layoutLogic();           break;   // Logic: dedicated LCD control bar
-            case 3: layoutStacked (58, 280); break;   // Pro Tools: taller bar, bigger counter
+            case 3: layoutProTools();        break;   // Pro Tools: green-counter transport bar
             case 2: layoutAbleton();         break;   // Ableton
             default: layoutDefault();        break;   // Layback
         }
     }
 
-    // Toggle the generic toolbar vs the Logic control bar.
-    void setLogicChrome (bool logic)
+    // Show the right top chrome for the active station (Logic bar / Pro Tools bar / generic toolbar).
+    void setChrome()
     {
+        const int lay = laf.skin.layout;
+        const bool logic = (lay == 1), pt = (lay == 3);
         logicBar.setVisible (logic);
         logicInspector.setVisible (logic);
+        ptBar.setVisible (pt);
+        const bool generic = ! logic && ! pt;
         for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &videoButton })
-            c->setVisible (! logic);
-        loopToggle.setVisible (! logic);
-        snapToggle.setVisible (! logic);
-        timeLabel.setVisible (! logic);
+            c->setVisible (generic);
+        loopToggle.setVisible (generic);
+        snapToggle.setVisible (generic);
+        timeLabel.setVisible (generic);
     }
 
     // Logic: full-width LCD control bar on top, status line, tracks fill below.
     void layoutLogic()
     {
-        setLogicChrome (true);
+        setChrome();
         auto area = getLocalBounds();
         transportBand = area.removeFromTop (58);
         logicBar.setBounds (transportBand);
@@ -523,7 +537,7 @@ public:
     // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
     void layoutDefault()
     {
-        setLogicChrome (false);
+        setChrome();
         auto r = getLocalBounds().reduced (12);
         auto top = r.removeFromTop (24);
         laybackWordmark = top.removeFromLeft (150);   // brand wordmark, drawn in paint()
@@ -561,9 +575,27 @@ public:
 
     // Stacked DAW layout (Logic / Pro Tools): top control bar (transport left,
     // centered counter, file/export right), status line, docked movie strip, timeline below.
+    // Pro Tools: full-width transport bar (green LED counters) on top, tracks fill below.
+    void layoutProTools()
+    {
+        setChrome();
+        auto area = getLocalBounds();
+        transportBand = area.removeFromTop (60);
+        ptBar.setBounds (transportBand);
+
+        auto status = area.removeFromTop (18);
+        titleLabel.setBounds (status.reduced (10, 0));
+
+        area.removeFromTop (4);
+        if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
+        timelineViewport.setBounds (area);
+        viewerFrame = {};
+        updateTimelineSize();
+    }
+
     void layoutStacked (int barH, int counterW)
     {
-        setLogicChrome (false);
+        setChrome();
         auto area = getLocalBounds();
         transportBand = area.removeFromTop (barH);          // paint() fills this as the control bar
 
@@ -594,7 +626,7 @@ public:
     // arrangement/timeline fills the window, video docked as a right-hand panel.
     void layoutAbleton()
     {
-        setLogicChrome (false);
+        setChrome();
         auto area = getLocalBounds();
         transportBand = area.removeFromTop (46);
 
@@ -1102,6 +1134,7 @@ private:
         mixerView.setSkin (s);
         logicBar.setSkin (s);
         logicInspector.setSkin (s);
+        ptBar.setSkin (s);
         resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
@@ -1895,6 +1928,7 @@ private:
         const double inBar = playhead - 2.0 * (double) (bbBar - 1);
         const int bbBeat  = juce::jlimit (1, 4, (int) (inBar / 0.5) + 1);
         logicBar.setPosition (juce::String (bbBar) + "  " + juce::String (bbBeat), formatTime (playhead));
+        ptBar.setPosition (formatTime (playhead), juce::String (bbBar) + "|" + juce::String (bbBeat));
         audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
@@ -1940,6 +1974,7 @@ private:
     bool      mixerVisible = false;
     LogicControlBar logicBar;     // shown only for the Logic station
     LogicInspector  logicInspector;
+    ProToolsControlBar ptBar;     // shown only for the Pro Tools station
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
