@@ -98,7 +98,7 @@ public:
             master.fader.setValue (engine->getMasterGain(), juce::dontSendNotification);
         auto r = getLocalBounds().reduced (8);
         r.removeFromTop (22);                                          // header
-        auto strips = r.removeFromBottom (juce::jmin (r.getHeight(), 320));   // channel strips at the bottom
+        auto strips = r.removeFromBottom (juce::jmin (r.getHeight(), 440));   // channel strips at the bottom (full stack)
         paramArea = r.withTrimmedBottom (6);                          // Quick Help / Region / Track panels above
         const int w = (strips.getWidth() - 8) / 2;
         if (sel != nullptr) sel->setBounds (strips.removeFromLeft (w));

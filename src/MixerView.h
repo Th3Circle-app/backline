@@ -57,6 +57,12 @@ struct ChannelStrip : public juce::Component
             solo.onClick = [this] { if (onSoloToggle) onSoloToggle (solo.getToggleState()); };
             addAndMakeVisible (mute); addAndMakeVisible (solo);
         }
+        else
+        {
+            mute.setClickingTogglesState (true);
+            mute.onClick = [this] { if (onMuteToggle) onMuteToggle (mute.getToggleState()); };
+            addAndMakeVisible (mute);   // master shows M only
+        }
     }
 
     void setMeter (float pk)
@@ -72,29 +78,30 @@ struct ChannelStrip : public juce::Component
         if (onSelectClick) onSelectClick();
     }
 
-    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, autoRow;
+    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, groupRow, autoRow, riRow;
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (4);
         r.removeFromTop (5);                                // colour cap
         name.setBounds (r.removeFromBottom (15));
-        if (! isMaster)
         {
-            auto ms = r.removeFromBottom (18);
-            mute.setBounds (ms.removeFromLeft (ms.getWidth() / 2 - 1));
-            ms.removeFromLeft (2);
-            solo.setBounds (ms);
-            r.removeFromBottom (4);
-
-            insertArea = r.removeFromTop (38); r.removeFromTop (3);
-            inRow      = r.removeFromTop (14); r.removeFromTop (2);
-            sendsRow   = r.removeFromTop (14); r.removeFromTop (2);
-            outputRow  = r.removeFromTop (14); r.removeFromTop (2);
-            autoRow    = r.removeFromTop (14); r.removeFromTop (3);
-            pan.setBounds (r.removeFromTop (24).withSizeKeepingCentre (24, 24)); r.removeFromTop (2);
-            valueBox = r.removeFromTop (13); r.removeFromTop (3);
+            auto ms = r.removeFromBottom (18);             // M/S (master = M only)
+            if (isMaster) mute.setBounds (ms.withSizeKeepingCentre (ms.getWidth() / 2, 18));
+            else { mute.setBounds (ms.removeFromLeft (ms.getWidth() / 2 - 1)); ms.removeFromLeft (2); solo.setBounds (ms); }
         }
+        r.removeFromBottom (2);
+        riRow = r.removeFromBottom (14); r.removeFromBottom (3);   // R/I (track) or Bnc (master)
+
+        insertArea = r.removeFromTop (38); r.removeFromTop (3);
+        if (! isMaster) { inRow = r.removeFromTop (14); r.removeFromTop (2); sendsRow = r.removeFromTop (14); r.removeFromTop (2); }
+        else            { inRow = {}; sendsRow = {}; }
+        outputRow = r.removeFromTop (14); r.removeFromTop (2);
+        groupRow  = r.removeFromTop (14); r.removeFromTop (2);
+        autoRow   = r.removeFromTop (14); r.removeFromTop (3);
+        if (! isMaster) { pan.setBounds (r.removeFromTop (24).withSizeKeepingCentre (24, 24)); r.removeFromTop (2); }
+        valueBox = r.removeFromTop (13); r.removeFromTop (3);
+
         meterBounds = r.removeFromRight (9);
         r.removeFromRight (2);
         tickArea = r.removeFromRight (16);
@@ -110,69 +117,64 @@ struct ChannelStrip : public juce::Component
         g.setColour (isMaster ? skin.accent : skin.audioStrip);      // colour cap
         g.fillRect (r.getX() + 3, r.getY() + 3, r.getWidth() - 6, 3);
 
-        if (! isMaster && ! insertArea.isEmpty())                    // insert slots
+        if (! insertArea.isEmpty())                                  // insert slots (EQ + FX / Mastering)
         {
             auto ia = insertArea;
             for (int i = 0; i < 2; ++i)
             {
                 auto slot = ia.removeFromTop (17).reduced (2, 1); ia.removeFromTop (1);
-                g.setColour (skin.control.brighter (0.04f));
-                g.fillRoundedRectangle (slot.toFloat(), 3.0f);
-                g.setColour (skin.windowBg.darker (0.2f));
-                g.drawRoundedRectangle (slot.toFloat(), 3.0f, 1.0f);
-                const juce::String label = (i < fxNames.size()) ? fxNames[i] : (i == 0 ? juce::String ("EQ") : juce::String());
+                g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (slot.toFloat(), 3.0f);
+                g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (slot.toFloat(), 3.0f, 1.0f);
+                const juce::String label = (i < fxNames.size()) ? fxNames[i]
+                                         : (i == 0 ? juce::String ("EQ") : (isMaster ? juce::String ("Mastering") : juce::String()));
                 g.setColour (label.isEmpty() ? skin.muted.withAlpha (0.5f) : skin.text);
                 g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
                 g.drawText (label.isEmpty() ? juce::String ("-") : label, slot.reduced (5, 0), juce::Justification::centredLeft, true);
             }
-
-            auto rowSlot = [&] (juce::Rectangle<int> b, const juce::String& t, juce::Colour txt)   // Logic strip rows
-            {
-                if (b.isEmpty()) return;
-                auto rf = b.toFloat().reduced (2.0f, 1.0f);
-                g.setColour (skin.control.brighter (0.04f));
-                g.fillRoundedRectangle (rf, 3.0f);
-                g.setColour (skin.windowBg.darker (0.2f));
-                g.drawRoundedRectangle (rf, 3.0f, 1.0f);
-                g.setColour (txt);
-                g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
-                g.drawText (t, b.reduced (6, 0), juce::Justification::centredLeft, true);
-            };
-            rowSlot (inRow,     "In 1-2",     skin.text);
-            rowSlot (sendsRow,  "Sends",      skin.muted);
-            rowSlot (outputRow, "Stereo Out", skin.text);
-            rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f));
         }
+
+        auto rowSlot = [&] (juce::Rectangle<int> b, const juce::String& t, juce::Colour txt, bool link, bool knob)
+        {
+            if (b.isEmpty()) return;
+            auto rf = b.toFloat().reduced (2.0f, 1.0f);
+            g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (rf, 3.0f);
+            g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+            float lpad = 6.0f;
+            if (link) { g.setColour (skin.muted); g.drawEllipse (rf.getX() + 3.0f, rf.getCentreY() - 3.0f, 6.0f, 6.0f, 1.1f); g.drawEllipse (rf.getX() + 7.0f, rf.getCentreY() - 3.0f, 6.0f, 6.0f, 1.1f); lpad = 18.0f; }
+            if (knob) { g.setColour (skin.windowBg.darker (0.2f)); g.fillEllipse (rf.getRight() - 11.0f, rf.getCentreY() - 4.0f, 8.0f, 8.0f); g.setColour (skin.muted); g.drawEllipse (rf.getRight() - 11.0f, rf.getCentreY() - 4.0f, 8.0f, 8.0f, 1.0f); }
+            g.setColour (txt); g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+            g.drawText (t, b.toFloat().withTrimmedLeft (lpad), juce::Justification::centredLeft, true);
+        };
+        rowSlot (inRow,     "In 1-2",     skin.text,  true,  false);
+        rowSlot (sendsRow,  "Sends",      skin.muted, false, true);
+        rowSlot (outputRow, "Stereo Out", skin.text,  false, false);
+        rowSlot (groupRow,  "Group",      skin.text,  false, false);
+        rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false);
 
         if (! valueBox.isEmpty())                                    // two dB value boxes (input | output)
         {
             auto vbx = valueBox;
-            auto right = vbx.removeFromRight (vbx.getWidth() / 2 - 1);
-            vbx.removeFromRight (2);
+            auto right = vbx.removeFromRight (vbx.getWidth() / 2 - 1); vbx.removeFromRight (2);
             const double v  = fader.getValue();
             const float  db = 20.0f * (float) std::log10 (juce::jmax (1.0e-4, v));
-            g.setColour (juce::Colour (0xff2a2a2a));
-            g.fillRoundedRectangle (vbx.toFloat(), 2.0f);
-            g.fillRoundedRectangle (right.toFloat(), 2.0f);
+            g.setColour (juce::Colour (0xff2a2a2a)); g.fillRoundedRectangle (vbx.toFloat(), 2.0f); g.fillRoundedRectangle (right.toFloat(), 2.0f);
             g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.0f, juce::Font::plain)));
-            g.setColour (skin.text);
-            g.drawText ("0.0", vbx, juce::Justification::centred, false);
-            g.setColour (db > 0.05f ? juce::Colours::red : juce::Colour (0xff7fcf7f));
-            g.drawText (juce::String (db, 1), right, juce::Justification::centred, false);
+            g.setColour (skin.text); g.drawText ("0.0", vbx, juce::Justification::centred, false);
+            g.setColour (db > 0.05f ? juce::Colours::red : juce::Colour (0xff7fcf7f)); g.drawText (juce::String (db, 1), right, juce::Justification::centred, false);
         }
 
         if (! tickArea.isEmpty())                                    // dB scale beside the fader
         {
             g.setColour (skin.muted.withAlpha (0.65f));
-            g.setFont (juce::Font (juce::FontOptions().withHeight (7.5f)));
-            for (int m : { 0, 6, 12, 24, 48 })
+            g.setFont (juce::Font (juce::FontOptions().withHeight (7.0f)));
+            for (int m : { 0, 3, 6, 12, 18, 24, 36, 48 })
             {
                 const int y = tickArea.getY() + (int) (((float) m / 60.0f) * tickArea.getHeight());
                 g.drawText (juce::String (m), tickArea.getX(), y, tickArea.getWidth(), 9, juce::Justification::centredRight, false);
             }
         }
 
-        if (! meterBounds.isEmpty())                                 // segmented peak meter
+        if (! meterBounds.isEmpty())                                 // segmented peak meter (mostly green)
         {
             g.setColour (juce::Colours::black.withAlpha (0.55f));
             g.fillRect (meterBounds);
@@ -181,8 +183,28 @@ struct ChannelStrip : public juce::Component
             for (int s = 0; s < lit; ++s)
             {
                 const float f = (float) s / (float) segs;
-                g.setColour (f > 0.9f ? juce::Colours::red : f > 0.66f ? juce::Colour (0xffe0b020) : juce::Colour (0xff4ad07a));
+                g.setColour (f > 0.96f ? juce::Colours::red : f > 0.85f ? juce::Colour (0xffe0b020) : juce::Colour (0xff4ad07a));
                 g.fillRect (meterBounds.getX(), meterBounds.getBottom() - (s + 1) * 4 + 1, meterBounds.getWidth(), 3);
+            }
+        }
+
+        if (! riRow.isEmpty())                                       // R/I (track) or Bnc (master)
+        {
+            if (isMaster)
+            {
+                auto bb = riRow.toFloat().reduced (2.0f, 1.0f);
+                g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (bb, 3.0f);
+                g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (bb, 3.0f, 1.0f);
+                g.setColour (skin.text); g.setFont (9.5f); g.drawText ("Bnc", riRow, juce::Justification::centred, false);
+            }
+            else
+            {
+                auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1); rl.removeFromLeft (2);
+                auto cell = [&] (juce::Rectangle<int> b, const char* tx, juce::Colour col)
+                { g.setColour (skin.control.darker (0.1f)); g.fillRoundedRectangle (b.toFloat().reduced (1.0f), 2.5f);
+                  g.setColour (col); g.setFont (9.5f); g.drawText (tx, b, juce::Justification::centred, false); };
+                cell (rR, "R", juce::Colour (0xffc8281a));
+                cell (rl, "I", skin.muted);
             }
         }
     }
