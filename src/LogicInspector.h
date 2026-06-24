@@ -89,9 +89,27 @@ public:
         a.removeFromTop (5);
         box (a.removeFromTop (38), "Movie", { movieName.isNotEmpty() ? movieName : juce::String ("No movie") });
         a.removeFromTop (5);
-        box (a.removeFromTop (juce::jmin (a.getHeight() / 2, 92)), "Region", { "Mute|", "Loop|", "Quantize|off", "Gain|0.0 dB" });
-        a.removeFromTop (5);
-        box (a, "Track", { "Channel|Audio", "Input|In 1-2", "Freeze|off", "Flex|off" });
+        const AudioTrack* st = nullptr;                                  // live values for the selected track
+        if (groups != nullptr && grp >= 0 && grp < (int) groups->size()
+            && trk >= 0 && trk < (int) (*groups)[(size_t) grp]->tracks.size())
+            st = (*groups)[(size_t) grp]->tracks[(size_t) trk].get();
+
+        if (st != nullptr)
+        {
+            const float db  = 20.0f * std::log10 (juce::jmax (1.0e-4f, st->volume));
+            const int   pan = (int) std::lround (st->pan * 100.0f);
+            const juce::String panTxt = pan == 0 ? juce::String ("Center")
+                                      : (pan < 0 ? "L " + juce::String (-pan) : "R " + juce::String (pan));
+            box (a, "Track", { "Name|" + st->name, "Channel|Audio",
+                               juce::String ("Mute|") + (st->mute ? "On" : "Off"),
+                               juce::String ("Solo|") + (st->solo ? "On" : "Off"),
+                               "Volume|" + juce::String (db, 1) + " dB",
+                               "Pan|" + panTxt });
+        }
+        else
+        {
+            box (a, "Track", { "No track selected" });
+        }
     }
 
     void resized() override

@@ -30,10 +30,8 @@ public:
         bx += 10;
         lcd = { bx, cy - 18, 260, 36 };
 
-        int lx = 12;                                    // left tool/view cluster (two groups of 3)
-        for (int i = 0; i < 6; ++i) { leftBtns[i] = { lx, cy - 12, 24, 24 }; lx += 25; if (i == 2) lx += 10; }
-        int rx = getWidth() - 12;                        // right view-toggle cluster (no VU meter here)
-        for (int i = 0; i < 4; ++i) { rx -= 24; rightBtns[i] = { rx, cy - 12, 22, 24 }; rx -= 3; }
+        int lx = 12;                                    // left cluster: Library + Mixer (both wired)
+        for (int i = 0; i < 2; ++i) { leftBtns[i] = { lx, cy - 12, 24, 24 }; lx += 28; }
     }
 
     void paint (juce::Graphics& g) override
@@ -56,33 +54,14 @@ public:
             g.drawRoundedRectangle (rf, 4.0f, 1.0f);
         };
 
-        for (int i = 0; i < 6; ++i)                      // left cluster: Library + Mixer are wired; rest decorative (dimmed)
+        for (int i = 0; i < 2; ++i)                      // left cluster: Library (-> plugins), Mixer (-> toggle mixer)
         {
-            const bool live = (i == 0 || i == 4);
-            auto b = leftBtns[i]; chipBg (b, ! live);
+            auto b = leftBtns[i]; chipBg (b, false);
             auto c = b.reduced (6).toFloat();
-            g.setColour (live ? glyph : glyph.withAlpha (0.30f));
-            switch (i)
-            {
-                case 0: for (int k = 0; k < 3; ++k) g.fillRect (c.getX(), c.getY() + (float) k * (c.getHeight() / 2.6f), c.getWidth(), 2.0f); break;          // library
-                case 1: g.fillEllipse (c.getCentreX() - 1.5f, c.getY(), 3.0f, 3.0f); g.fillRect (c.getCentreX() - 1.0f, c.getY() + 5.0f, 2.0f, c.getHeight() - 5.0f); break;   // inspector (i)
-                case 2: g.setFont (juce::Font (juce::FontOptions().withHeight (13.0f))); g.drawText ("?", b, juce::Justification::centred, false); break;       // help
-                case 3: g.drawEllipse (c.reduced (1.0f), 1.6f); g.fillRect (c.getCentreX() - 1.0f, c.getY() + 1.0f, 2.0f, 4.0f); break;                          // smart (knob)
-                case 4: for (int k = 0; k < 3; ++k) g.fillRect (c.getX() + (float) k * (c.getWidth() / 2.6f), c.getY(), 2.0f, c.getHeight()); break;            // mixer (faders)
-                case 5: g.drawLine (c.getX(), c.getBottom(), c.getRight(), c.getY(), 2.0f); break;                                                              // editors (pencil)
-            }
-            if (i == 0) { g.setColour (rec); g.fillEllipse ((float) b.getRight() - 6.0f, (float) b.getY() + 2.0f, 4.0f, 4.0f); }   // Library red badge
-        }
-
-        for (int i = 0; i < 4; ++i)                      // right cluster: decorative (dimmed)
-        {
-            auto b = rightBtns[i]; chipBg (b, true);
-            auto c = b.reduced (6).toFloat();
-            g.setColour (glyph.withAlpha (0.30f));
-            if      (i == 0) for (int k = 0; k < 3; ++k) g.fillRect (c.getX(), c.getY() + (float) k * (c.getHeight() / 2.6f), c.getWidth(), 2.0f);
-            else if (i == 1) g.drawRect (c, 1.6f);
-            else if (i == 2) g.drawEllipse (c.reduced (1.0f), 1.6f);
-            else             g.fillRect (c.getCentreX() - 1.0f, c.getY(), 2.0f, c.getHeight());
+            g.setColour (glyph);
+            if (i == 0) { for (int k = 0; k < 3; ++k) g.fillRect (c.getX(), c.getY() + (float) k * (c.getHeight() / 2.6f), c.getWidth(), 2.0f);   // library (list)
+                          g.setColour (rec); g.fillEllipse ((float) b.getRight() - 6.0f, (float) b.getY() + 2.0f, 4.0f, 4.0f); }
+            else        { for (int k = 0; k < 3; ++k) g.fillRect (c.getX() + (float) k * (c.getWidth() / 2.6f), c.getY(), 2.0f, c.getHeight()); }  // mixer (faders)
         }
 
         const bool playing = isPlaying && isPlaying();
@@ -142,11 +121,11 @@ public:
                 return;
             }
         if (leftBtns[0].contains (e.getPosition())) { if (onLibrary) onLibrary(); return; }   // Library -> Plugins window
-        if (leftBtns[4].contains (e.getPosition())) { if (onMixer)   onMixer();   return; }   // Mixer chip -> toggle Mixer
+        if (leftBtns[1].contains (e.getPosition())) { if (onMixer)   onMixer();   return; }   // Mixer chip -> toggle Mixer
     }
 
 private:
     Skin skin = Skin::forDaw (Skin::Logic);
-    juce::Rectangle<int> btn[5], lcd, leftBtns[6], rightBtns[4];
+    juce::Rectangle<int> btn[5], lcd, leftBtns[2];
     juce::String lcdMain { "1  1" }, lcdSub { "0:00.00" };
 };
