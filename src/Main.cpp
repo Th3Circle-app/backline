@@ -140,6 +140,8 @@ public:
         logicBar.onPlay   = [this] { togglePlay(); };
         logicBar.onRecord = [this] { toggleSelectedRecordArm(); };
         logicBar.onCycle  = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
+        logicBar.onLibrary = [this] { openPluginListWindow(); };
+        logicBar.onMixer   = [this] { toggleMixer(); };
         logicBar.isPlaying = [this] { return playing; };
         logicBar.isCycle   = [this] { return loopEnabled; };
         addChildComponent (logicBar);
@@ -151,6 +153,7 @@ public:
         logicInspector.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
         logicInspector.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         logicInspector.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
+        logicInspector.onMasterMute   = [this] (bool b)  { audioEngine.setMasterMute (b); if (mixerVisible) mixerView.syncFromModel(); };
         addChildComponent (logicInspector);
 
         ptBar.onRewind = [this] { seekAll (0.0); };
@@ -210,6 +213,7 @@ public:
         timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
         timeline.onTrackRecord   = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.recordArm = ! tr.recordArm; timeline.repaint(); } };
         timeline.onTrackVolume   = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); if (mixerVisible) mixerView.syncFromModel(); refreshInspector(); } };
+        timeline.onTrackPan      = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); refreshInspector(); } };
         timeline.onVideoMute     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoMute = ! groups[(size_t) g]->videoMute; applyMixGains(); timeline.repaint(); } };
         timeline.onVideoSolo     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoSolo = ! groups[(size_t) g]->videoSolo; applyMixGains(); timeline.repaint(); } };
         timeline.onActivateGroup = [this] (int g) { activateGroup (g); };
@@ -237,6 +241,7 @@ public:
         mixerView.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         mixerView.onSelect = [this] (int g, int t) { selGroup = g; selTrack = t; selClip = -1; timeline.setSelection (g, t, -1); };
         mixerView.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
+        mixerView.onMasterMute   = [this] (bool b)  { audioEngine.setMasterMute (b); refreshInspector(); };
         addChildComponent (mixerView);   // shown when toggled
 
         keysButton.onClick = [this] { showKeysMenu(); };

@@ -49,6 +49,7 @@ public:
     std::function<void (int, int)>                 onTrackSolo;     // group, track
     std::function<void (int, int)>                 onTrackRecord;   // group, track (record-enable)
     std::function<void (int, int, float)>          onTrackVolume;   // group, track, linear gain (header fader)
+    std::function<void (int, int, float)>          onTrackPan;      // group, track, -1..+1 (header pan knob)
     std::function<void (int)>                      onVideoMute;     // group
     std::function<void (int)>                      onVideoSolo;     // group
     std::function<void (int)>                      onActivateGroup; // group
@@ -68,7 +69,7 @@ public:
 
 private:
     void refitZoom();   // set the fixed zoom so current content fits the visible width
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, FadeIn, FadeOut };
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut };
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
     int    numGroups() const;
@@ -85,6 +86,7 @@ private:
     juce::Rectangle<int>   sBox (int rowYpos) const;
     juce::Rectangle<int>   rBox (int rowYpos) const;   // Logic record-enable box (empty otherwise)
     juce::Rectangle<int>   vBox (int rowYpos) const;   // Logic header volume slider track (empty otherwise)
+    juce::Rectangle<int>   panBox (int rowYpos) const; // Logic header pan knob hit area (empty otherwise)
     juce::Rectangle<int>   disclosureRectAt (int rowYpos) const;
     void seekFromMouse (const juce::MouseEvent&);
     void drawMS (juce::Graphics&, int rowYpos, bool mute, bool solo);
@@ -101,6 +103,7 @@ private:
     int       dragGroup = -1, dragTrack = -1, dragClip = -1;
     AudioClip dragStartClip;
     int       dragStartX = 0;
+    float     dragStartPan = 0.0f;
     juce::Rectangle<int> dragVBox;     // header-volume slider track being dragged
     double    dragPps = 0.0, frozenLen = 0.0;
     bool      draggedClip = false;

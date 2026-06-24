@@ -184,6 +184,11 @@ juce::Rectangle<int> TimelineComponent::vBox (int rowYpos) const
     if (! skin.logicHeaders) return {};
     return { 156, rowYpos + rowHeight - 21, 108, 14 };
 }
+juce::Rectangle<int> TimelineComponent::panBox (int rowYpos) const
+{
+    if (! skin.logicHeaders) return {};
+    return { headerW - 16 - 12, rowYpos + rowHeight - 13 - 12, 24, 24 };   // around the drawn pan knob
+}
 juce::Rectangle<int> TimelineComponent::disclosureRectAt (int rowYpos) const { return { 6, rowYpos + rowHeight / 2 - 8, 16, 16 }; }
 
 //==============================================================================
@@ -768,6 +773,12 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
                 if (onTrackVolume) onTrackVolume (hit->group, hit->track, vn * 1.4f);
                 repaint(); return;
             }
+            if (panBox (hit->y).contains (e.getPosition()))
+            {
+                dragMode = Drag::HeaderPan; dragGroup = hit->group; dragTrack = hit->track; dragStartX = e.x;
+                dragStartPan = (groups != nullptr) ? (*groups)[(size_t) hit->group]->tracks[(size_t) hit->track]->pan : 0.0f;
+                return;
+            }
             if (onActivateGroup) onActivateGroup (hit->group);
             if (onClipSelected)  onClipSelected (hit->group, hit->track, -1);
         }
@@ -871,6 +882,14 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
+    if (dragMode == Drag::HeaderPan)
+    {
+        const float p = juce::jlimit (-1.0f, 1.0f, dragStartPan + (float) (e.x - dragStartX) * 0.012f);   // horizontal drag = pan
+        if (onTrackPan) onTrackPan (dragGroup, dragTrack, p);
+        repaint();
+        return;
+    }
+
     if (dragMode == Drag::Loop)
     {
         if (e.getDistanceFromDragStart() > 3)
@@ -946,7 +965,7 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
 
 void TimelineComponent::mouseUp (const juce::MouseEvent&)
 {
-    if (dragMode == Drag::HeaderVol) { dragMode = Drag::None; return; }
+    if (dragMode == Drag::HeaderVol || dragMode == Drag::HeaderPan) { dragMode = Drag::None; return; }
 
     if (dragMode == Drag::Loop)
     {

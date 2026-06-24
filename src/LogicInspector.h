@@ -18,11 +18,13 @@ public:
     std::function<void (int, int, bool)>  onMute, onSolo;
     std::function<void (int, int)>        onFxMenu;
     std::function<void (float)>           onMasterVolume;
+    std::function<void (bool)>            onMasterMute;
 
     LogicInspector()
     {
         master.name.setText ("Master", juce::dontSendNotification);
-        master.onFader = [this] (float v) { if (onMasterVolume) onMasterVolume (v); };
+        master.onFader      = [this] (float v) { if (onMasterVolume) onMasterVolume (v); };
+        master.onMuteToggle = [this] (bool b)  { if (onMasterMute)   onMasterMute (b); };
         addAndMakeVisible (master);
     }
 
@@ -95,7 +97,10 @@ public:
     void resized() override
     {
         if (engine != nullptr)
+        {
             master.fader.setValue (engine->getMasterGain(), juce::dontSendNotification);
+            master.mute.setToggleState (engine->getMasterMute(), juce::dontSendNotification);
+        }
         auto r = getLocalBounds().reduced (8);
         r.removeFromTop (22);                                          // header
         auto strips = r.removeFromBottom (juce::jmin (r.getHeight(), 440));   // channel strips at the bottom (full stack)

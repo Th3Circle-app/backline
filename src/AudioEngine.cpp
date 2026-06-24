@@ -162,7 +162,7 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
         }
     }
 
-    const float mg = masterGain.load();                 // master fader
+    const float mg = masterMute.load() ? 0.0f : masterGain.load();   // master fader (0 when muted)
     if (! juce::approximatelyEqual (mg, 1.0f))
         info.buffer->applyGain (info.startSample, n, mg);
 
@@ -333,6 +333,8 @@ void AudioEngine::setTrackPan (int trackId, float pan)
 
 void  AudioEngine::setMasterGain (float g)    { mixer.masterGain.store (juce::jmax (0.0f, g)); }
 float AudioEngine::getMasterGain() const      { return mixer.masterGain.load(); }
+void  AudioEngine::setMasterMute (bool m)     { mixer.masterMute.store (m); }
+bool  AudioEngine::getMasterMute() const      { return mixer.masterMute.load(); }
 void  AudioEngine::setExternalPeak (float v)  { mixer.externalPeak.store (juce::jmax (0.0f, v)); }
 float AudioEngine::getMasterPeak() const      { return juce::jmax (mixer.masterPeak.load(), mixer.externalPeak.load()); }
 

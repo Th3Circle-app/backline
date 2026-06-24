@@ -222,6 +222,7 @@ public:
     std::function<void (int, int)>        onFxMenu;
     std::function<void (int, int)>        onSelect;
     std::function<void (float)>           onMasterVolume;
+    std::function<void (bool)>            onMasterMute;
 
     MixerView() = default;
 
@@ -328,12 +329,13 @@ private:
         {
             s->name.setText ("Master", juce::dontSendNotification);
             s->fader.setValue (engine != nullptr ? engine->getMasterGain() : 1.0, juce::dontSendNotification);
+            s->mute.setToggleState (engine != nullptr && engine->getMasterMute(), juce::dontSendNotification);
         }
 
         const int g2 = g, t2 = t;
         s->onFader      = [this, g2, t2, master] (float v) { if (master) { if (onMasterVolume) onMasterVolume (v); } else if (onVolume) onVolume (g2, t2, v); };
         s->onPanChange  = [this, g2, t2] (float p)  { if (onPan)  onPan  (g2, t2, p); };
-        s->onMuteToggle = [this, g2, t2] (bool b)   { if (onMute) onMute (g2, t2, b); };
+        s->onMuteToggle = [this, g2, t2, master] (bool b) { if (master) { if (onMasterMute) onMasterMute (b); } else if (onMute) onMute (g2, t2, b); };
         s->onSoloToggle = [this, g2, t2] (bool b)   { if (onSolo) onSolo (g2, t2, b); };
         s->onFxClick    = [this, g2, t2] { if (onFxMenu) onFxMenu (g2, t2); };
         s->onSelectClick= [this, g2, t2] { if (onSelect) onSelect (g2, t2); };
