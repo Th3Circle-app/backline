@@ -830,30 +830,34 @@ private:
         m.addItem (1, "Split here");
         m.addItem (2, "Delete clip");
         m.addSeparator();
-        m.addItem (3, "Fade In (1 s)");
-        m.addItem (4, "Fade Out (1 s)");
+        const char* shapes[] = { "Linear", "Exponential", "S-Curve (Bell)", "Logarithmic" };
+        juce::PopupMenu fin, fout;
+        for (int i = 0; i < 4; ++i) { fin.addItem (10 + i, shapes[i]); fout.addItem (20 + i, shapes[i]); }
+        m.addSubMenu ("Fade In", fin);
+        m.addSubMenu ("Fade Out", fout);
         m.addItem (5, "Remove Fades");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
             {
                 if      (r == 1) splitTrackClip (g, t, tm);
                 else if (r == 2) deleteClip (g, t, c);
-                else if (r == 3) applyFade (0);
-                else if (r == 4) applyFade (1);
+                else if (r >= 10 && r <= 13) applyFade (0, r - 10);
+                else if (r >= 20 && r <= 23) applyFade (1, r - 20);
                 else if (r == 5) applyFade (2);
                 restoreKeyFocus();
             });
     }
 
     // Fade the selected clip. mode: 0 = fade in, 1 = fade out, 2 = remove both.
-    void applyFade (int mode)
+    // shape: 0 linear, 1 exponential, 2 s-curve (bell), 3 logarithmic.
+    void applyFade (int mode, int shape = 0)
     {
         if (! validClip (selGroup, selTrack, selClip)) return;
         pushUndo();
         AudioClip nc = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
         const double f = juce::jmax (0.05, juce::jmin (1.0, nc.duration * 0.5));
-        if      (mode == 0) nc.fadeIn  = f;
-        else if (mode == 1) nc.fadeOut = f;
+        if      (mode == 0) { nc.fadeIn  = (nc.fadeIn  > 0.0 ? nc.fadeIn  : f); nc.fadeInShape  = shape; }
+        else if (mode == 1) { nc.fadeOut = (nc.fadeOut > 0.0 ? nc.fadeOut : f); nc.fadeOutShape = shape; }
         else                { nc.fadeIn = 0.0; nc.fadeOut = 0.0; }
         clipChanged (selGroup, selTrack, selClip, nc);
         timeline.repaint();
@@ -1227,9 +1231,12 @@ private:
             m.addCommandItem (&commandManager, LSCmd::DeleteClip);
             m.addSeparator();
             const bool hasClip = validClip (selGroup, selTrack, selClip);
-            m.addItem (9070, "Fade In",      hasClip);
-            m.addItem (9071, "Fade Out",     hasClip);
-            m.addItem (9072, "Remove Fades", hasClip);
+            const char* shapes[] = { "Linear", "Exponential", "S-Curve (Bell)", "Logarithmic" };
+            juce::PopupMenu fin, fout;
+            for (int i = 0; i < 4; ++i) { fin.addItem (9070 + i, shapes[i], hasClip); fout.addItem (9074 + i, shapes[i], hasClip); }
+            m.addSubMenu ("Fade In", fin, hasClip);
+            m.addSubMenu ("Fade Out", fout, hasClip);
+            m.addItem (9078, "Remove Fades", hasClip);
         }
         else if (name == "Track")
         {
@@ -1327,9 +1334,11 @@ private:
             case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
             case 9030: seekAll (0.0); break;
             case 9040: closeAllPluginWindows(); break;
-            case 9070: applyFade (0); break;
-            case 9071: applyFade (1); break;
-            case 9072: applyFade (2); break;
+            case 9070: applyFade (0, 0); break;  case 9071: applyFade (0, 1); break;
+            case 9072: applyFade (0, 2); break;  case 9073: applyFade (0, 3); break;
+            case 9074: applyFade (1, 0); break;  case 9075: applyFade (1, 1); break;
+            case 9076: applyFade (1, 2); break;  case 9077: applyFade (1, 3); break;
+            case 9078: applyFade (2); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9050: toggleMixer(); break;
             default: break;
@@ -1741,6 +1750,8 @@ private:
                             co->setProperty ("dur", c.duration);
                             co->setProperty ("fadeIn", c.fadeIn);
                             co->setProperty ("fadeOut", c.fadeOut);
+                            co->setProperty ("fadeInShape", c.fadeInShape);
+                            co->setProperty ("fadeOutShape", c.fadeOutShape);
                             carr.append (juce::var (co));
                         }
                         to->setProperty ("clips", carr);
@@ -1843,7 +1854,8 @@ private:
                         if (auto* carr = tv["clips"].getArray())
                             for (auto& cv : *carr)
                                 tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"],
-                                                       (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0) });
+                                                       (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0),
+                                                       (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0) });
                         if (tr->clips.empty() && tr->sourceLength > 0.0)
                             tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 

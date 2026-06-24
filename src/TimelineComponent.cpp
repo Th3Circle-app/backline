@@ -14,6 +14,12 @@ namespace
     {
         return fill.getPerceivedBrightness() > 0.55f ? juce::Colours::black : juce::Colours::white;
     }
+
+    float fadeCurve (float x, int s)   // 0 linear, 1 exponential, 2 s-curve (bell), 3 logarithmic
+    {
+        x = juce::jlimit (0.0f, 1.0f, x);
+        switch (s) { case 1: return x * x; case 2: return x * x * (3.0f - 2.0f * x); case 3: return std::sqrt (x); default: return x; }
+    }
 }
 
 //==============================================================================
@@ -488,23 +494,30 @@ void TimelineComponent::paint (juce::Graphics& g)
                     t->thumb->drawChannels (g, waveArea.toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
 
-                {                                              // fade ramps + grab handles
+                {                                              // fade ramps (curved per shape) + grab handles
                     const float pps = (float) pixelsPerSecond();
+                    const float hh  = r.getHeight();
                     if (c.fadeIn > 0.0)
                     {
                         const float fw = juce::jmin ((float) c.fadeIn * pps, r.getWidth());
-                        juce::Path p; p.addTriangle (r.getX(), r.getY(), r.getX() + fw, r.getY(), r.getX(), r.getBottom());
-                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (p);
-                        g.setColour (juce::Colours::white.withAlpha (0.75f)); g.drawLine (r.getX(), r.getBottom(), r.getX() + fw, r.getY(), 1.2f);
+                        juce::Path fill, line;
+                        fill.startNewSubPath (r.getX(), r.getBottom()); line.startNewSubPath (r.getX(), r.getBottom());
+                        for (int s = 1; s <= 12; ++s) { const float u = (float) s / 12.0f; const float gx = r.getX() + u * fw; const float gy = r.getBottom() - fadeCurve (u, c.fadeInShape) * hh; fill.lineTo (gx, gy); line.lineTo (gx, gy); }
+                        fill.lineTo (r.getX(), r.getY()); fill.closeSubPath();
+                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (fill);
+                        g.setColour (juce::Colours::white.withAlpha (0.8f));  g.strokePath (line, juce::PathStrokeType (1.3f));
                     }
                     if (c.fadeOut > 0.0)
                     {
                         const float fw = juce::jmin ((float) c.fadeOut * pps, r.getWidth());
-                        juce::Path p; p.addTriangle (r.getRight() - fw, r.getY(), r.getRight(), r.getY(), r.getRight(), r.getBottom());
-                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (p);
-                        g.setColour (juce::Colours::white.withAlpha (0.75f)); g.drawLine (r.getRight() - fw, r.getY(), r.getRight(), r.getBottom(), 1.2f);
+                        juce::Path fill, line;
+                        fill.startNewSubPath (r.getRight(), r.getBottom()); line.startNewSubPath (r.getRight(), r.getBottom());
+                        for (int s = 1; s <= 12; ++s) { const float u = (float) s / 12.0f; const float gx = r.getRight() - u * fw; const float gy = r.getBottom() - fadeCurve (u, c.fadeOutShape) * hh; fill.lineTo (gx, gy); line.lineTo (gx, gy); }
+                        fill.lineTo (r.getRight(), r.getY()); fill.closeSubPath();
+                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (fill);
+                        g.setColour (juce::Colours::white.withAlpha (0.8f));  g.strokePath (line, juce::PathStrokeType (1.3f));
                     }
-                    if (r.getWidth() > 30.0f)                   // little corner handles to show fades are draggable
+                    if (r.getWidth() > 30.0f)                   // corner handles (show fades are draggable/resizable)
                     {
                         g.setColour (juce::Colours::white.withAlpha (0.55f));
                         g.fillRect (r.getX() + (float) edgePx, r.getY() + 1.0f, 5.0f, 3.0f);
@@ -765,12 +778,16 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
         {
             if (onClipSelected) onClipSelected (hit->group, hit->track, hitClip);
 
-            auto r = clipRectAt (hit->y, t->clips[(size_t) hitClip]);
+            const auto& cc = t->clips[(size_t) hitClip];
+            auto r = clipRectAt (hit->y, cc);
+            const float pps0  = (float) pixelsPerSecond();
+            const float finW  = (float) cc.fadeIn  * pps0;            // current fade widths -> grab their end to resize
+            const float foutW = (float) cc.fadeOut * pps0;
             const bool top   = ((float) e.y <= r.getY() + 12.0f);
             const bool left  = ((float) e.x <= r.getX() + edgePx);
             const bool right = ((float) e.x >= r.getRight() - edgePx);
-            const bool fadeInZone  = top && ! left  && (float) e.x < r.getX() + edgePx + 20.0f;
-            const bool fadeOutZone = top && ! right && (float) e.x > r.getRight() - edgePx - 20.0f;
+            const bool fadeInZone  = top && ! left  && (float) e.x <  r.getCentreX() && (float) e.x <= r.getX() + juce::jmax (20.0f, finW)  + 8.0f;
+            const bool fadeOutZone = top && ! right && (float) e.x >= r.getCentreX() && (float) e.x >= r.getRight() - juce::jmax (20.0f, foutW) - 8.0f;
             dragMode = fadeInZone  ? Drag::FadeIn
                      : fadeOutZone ? Drag::FadeOut
                      : left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;

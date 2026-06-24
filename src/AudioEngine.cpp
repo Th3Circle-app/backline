@@ -3,6 +3,19 @@
 #include "NativeEffects.h"
 #include <cmath>
 
+// Fade curve shapes applied to the normalized 0..1 fade fraction.
+static inline float fadeShape (float x, int s) noexcept
+{
+    x = juce::jlimit (0.0f, 1.0f, x);
+    switch (s)
+    {
+        case 1:  return x * x;                          // exponential (slow start)
+        case 2:  return x * x * (3.0f - 2.0f * x);      // s-curve (bell)
+        case 3:  return std::sqrt (x);                  // logarithmic (fast start)
+        default: return x;                              // linear
+    }
+}
+
 //==============================================================================
 void AudioEngine::Mixer::recomputeLength()
 {
@@ -99,8 +112,8 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                     {
                         const juce::int64 cl = (ovStart - clipStart) + i;
                         float fdf = 1.0f;
-                        if (cl < fIn)                fdf = (float) cl / (float) fIn;
-                        else if (cl > effLen - fOut) fdf = (float) (effLen - cl) / (float) fOut;
+                        if (cl < fIn)                fdf = fadeShape ((float) cl / (float) fIn, c.fadeInShape);
+                        else if (cl > effLen - fOut) fdf = fadeShape ((float) (effLen - cl) / (float) fOut, c.fadeOutShape);
                         fdf = juce::jlimit (0.0f, 1.0f, fdf);
                         dp[i] += sp[i] * fdf;
                     }

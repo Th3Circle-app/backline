@@ -11,6 +11,8 @@ struct AudioClip
     double duration      = 0.0;   // length on the timeline / source consumed
     double fadeIn        = 0.0;   // fade-in length (seconds) from the clip start
     double fadeOut       = 0.0;   // fade-out length (seconds) to the clip end
+    int    fadeInShape   = 0;     // 0 linear, 1 exponential, 2 s-curve (bell), 3 logarithmic
+    int    fadeOutShape  = 0;
 
     double timelineEnd() const { return timelineStart + duration; }
 };
