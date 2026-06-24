@@ -140,7 +140,8 @@ class MainComponent : public juce::Component,
                       private juce::Timer,
                       private juce::ChangeListener,
                       public juce::ApplicationCommandTarget,
-                      public juce::MenuBarModel
+                      public juce::MenuBarModel,
+                      public juce::FileDragAndDropTarget
 {
 public:
     MainComponent()
@@ -429,6 +430,32 @@ public:
                 const auto res = fc.getResult();
                 if (res.existsAsFile()) addTrackFromFile (g, res);
             });
+    }
+
+    //== drag-and-drop import from Finder ==
+    static bool isAudioExt (const juce::String& e)
+    { return juce::StringArray ({ ".wav",".mp3",".m4a",".aif",".aiff",".flac",".ogg",".aac",".caf",".wma" }).contains (e); }
+    static bool isVideoExt (const juce::String& e)
+    { return juce::StringArray ({ ".mov",".mp4",".m4v",".qt",".avi",".mpg",".mpeg",".m2v",".m2ts",".mts",".ts",".3gp",".mxf",".dv",".mkv",".webm",".wmv",".flv" }).contains (e); }
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (auto& f : files) { const auto e = juce::File (f).getFileExtension().toLowerCase(); if (isAudioExt (e) || isVideoExt (e)) return true; }
+        return false;
+    }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        int added = 0; bool needAudioHome = false;
+        for (auto& f : files)
+        {
+            const juce::File file (f);
+            const auto e = file.getFileExtension().toLowerCase();
+            if (isVideoExt (e))      { addVideo (file); ++added; }
+            else if (isAudioExt (e)) { if (activeGroup >= 0) { addTrackFromFile (activeGroup, file); ++added; } else needAudioHome = true; }
+        }
+        if (added) { resized(); timeline.repaint(); }
+        if (needAudioHome && added == 0)
+            titleLabel.setText ("Add a video first, then drag songs onto it", juce::dontSendNotification);
     }
 
     void addTrackFromFile (int g, const juce::File& f)
