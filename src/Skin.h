@@ -32,7 +32,7 @@ struct Skin
     {
         if (palette == 1)   // Pro Tools muted pastels
         {
-            static const juce::uint32 pt[] = { 0xff5f8f6a, 0xff5a82ad, 0xff8a6fae, 0xffab8a5a, 0xffac5f86, 0xff5f9aa0 };
+            static const juce::uint32 pt[] = { 0xff6fae7e, 0xff6f96c4, 0xff9a7fc0, 0xffbf9e62, 0xffc06f96, 0xff6fafb4 };
             return juce::Colour (pt[(size_t) (idx % 6)]);
         }
         if (palette == 2)   // Ableton bright flats
@@ -64,7 +64,7 @@ struct Skin
 
             case ProTools:   // near-black, teal/green accent, bright green waveforms
                 s.name = "Pro Tools";
-                s.windowBg = juce::Colour (0xff121212); s.panel = juce::Colour (0xff1c1c1c); s.control = juce::Colour (0xff2a2a2a);
+                s.windowBg = juce::Colour (0xff26282b); s.panel = juce::Colour (0xff1c1c1c); s.control = juce::Colour (0xff343638);
                 s.accent = juce::Colour (0xff14b07d); s.text = juce::Colour (0xffdcdcdc); s.muted = juce::Colour (0xff8a8a8a);
                 s.ruler = juce::Colour (0xff1f1f1f); s.headerTop = juce::Colour (0xff242424); s.headerBottom = juce::Colour (0xff181818);
                 s.activeRow = juce::Colour (0xff15352c); s.activeStrip = juce::Colour (0xff1fd0a0);

@@ -30,8 +30,8 @@ public:
         const int d = 28, gap = 5;
         for (int i = 0; i < 5; ++i) { btn[i] = { bx, cy - d / 2, d, d }; bx += d + gap; }
         bx += 12;
-        mainLcd = { bx, cy - 17, 150, 34 };                      // Main counter (timecode)
-        subLcd  = { bx + 156, cy - 17, 92, 34 };                 // Sub counter (bars)
+        mainLcd = { bx, cy - 19, 200, 38 };                      // Main counter (timecode) — large
+        subLcd  = { bx + 206, cy - 19, 88, 38 };                 // Sub counter (bars)
 
         int rx = getWidth() - 12;                                 // edit-mode cluster (right)
         for (int i = 0; i < 4; ++i) { rx -= 26; mode[i] = { rx, cy - 12, 24, 24 }; rx -= 3; }
@@ -103,7 +103,7 @@ public:
             g.setColour (lcdGrn); g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), sz, juce::Font::bold)));
             g.drawText (value, rf.reduced (6.0f, 2.0f), juce::Justification::centredRight, false);
         };
-        led (mainLcd, "MAIN",   mainCtr, 18.0f);
+        led (mainLcd, "TIMECODE",   mainCtr, 24.0f);
         led (subLcd,  "BARS|BEATS", subCtr, 14.0f);
 
         for (int i = 0; i < 4; ++i)                              // edit-mode cluster (right)

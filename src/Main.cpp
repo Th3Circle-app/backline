@@ -1928,7 +1928,8 @@ private:
         const double inBar = playhead - 2.0 * (double) (bbBar - 1);
         const int bbBeat  = juce::jlimit (1, 4, (int) (inBar / 0.5) + 1);
         logicBar.setPosition (juce::String (bbBar) + "  " + juce::String (bbBeat), formatTime (playhead));
-        ptBar.setPosition (formatTime (playhead), juce::String (bbBar) + "|" + juce::String (bbBeat));
+        const int tcH = (int) (playhead / 3600.0), tcM = ((int) (playhead / 60.0)) % 60, tcS = ((int) playhead) % 60, tcF = ((int) (playhead * 30.0)) % 30;
+        ptBar.setPosition (juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF), juce::String (bbBar) + "|" + juce::String (bbBeat));
         audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");

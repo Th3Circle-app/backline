@@ -119,17 +119,20 @@ juce::Rectangle<float> TimelineComponent::clipRectAt (int rowYpos, const AudioCl
 juce::Rectangle<int> TimelineComponent::mBox (int rowYpos) const
 {
     if (skin.logicHeaders) return { 58, rowYpos + rowHeight - 22, 18, 16 };
+    if (skin.ptHeaders)    return { headerW - 22, rowYpos + rowHeight / 2 - 8, 16, 16 };
     return { headerW - 56, rowYpos + rowHeight / 2 - 9, 22, 18 };
 }
 juce::Rectangle<int> TimelineComponent::sBox (int rowYpos) const
 {
     if (skin.logicHeaders) return { 76, rowYpos + rowHeight - 22, 18, 16 };
+    if (skin.ptHeaders)    return { headerW - 40, rowYpos + rowHeight / 2 - 8, 16, 16 };
     return { headerW - 30, rowYpos + rowHeight / 2 - 9, 22, 18 };
 }
 juce::Rectangle<int> TimelineComponent::rBox (int rowYpos) const
 {
-    if (! skin.logicHeaders) return {};
-    return { 112, rowYpos + rowHeight - 22, 18, 16 };     // R = 4th cell (after M S Freeze)
+    if (skin.logicHeaders) return { 112, rowYpos + rowHeight - 22, 18, 16 };   // R = 4th cell (after M S Freeze)
+    if (skin.ptHeaders)    return { headerW - 58, rowYpos + rowHeight / 2 - 8, 16, 16 };   // PT: rec at left of cluster
+    return {};
 }
 juce::Rectangle<int> TimelineComponent::vBox (int rowYpos) const
 {
@@ -327,7 +330,7 @@ void TimelineComponent::paint (juce::Graphics& g)
             const auto stripCol = Skin::clipColour (skin.clipPalette, skin.audioStrip, row.track);
 
             if (skin.tintLanes)                                   // Pro Tools: tint the whole lane its track colour
-            { g.setColour (base.withAlpha (0.14f)); g.fillRect (headerW, row.y, w - headerW, rowHeight); }
+            { g.setColour (base.withAlpha (0.33f)); g.fillRect (headerW, row.y, w - headerW, rowHeight); }
 
             const bool selTrk = (row.group == selGroup && row.track == selTrack);
             if (skin.logicHeaders)
@@ -398,6 +401,33 @@ void TimelineComponent::paint (juce::Graphics& g)
                 g.setColour (juce::Colour (0xffc8cacb));
                 g.drawLine (pcx, pcy, pcx + std::sin (pa) * (pr - 3.0f), pcy - std::cos (pa) * (pr - 3.0f), 1.8f);
             }
+            else if (skin.ptHeaders)                               // Pro Tools-style header
+            {
+                g.setColour (selTrk ? skin.activeRow.brighter (0.08f) : ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd));
+                g.fillRect (0, row.y, headerW, rowHeight);
+                g.setColour (skin.windowBg.darker (0.3f));
+                g.fillRect (0, row.y + rowHeight - 1, headerW, 1);
+
+                g.setColour (skin.muted);                          // track number
+                g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
+                g.drawText (juce::String (row.track + 1), 2, row.y, 18, rowHeight, juce::Justification::centred, false);
+                g.setColour (stripCol);                            // wide colour band (matches the region)
+                g.fillRect (20, row.y, 6, rowHeight);
+                g.setColour (skin.text);                           // name
+                g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f)));
+                g.drawText (t->name, 32, row.y + 6, headerW - 96, rowHeight - 12, juce::Justification::centredLeft, true);
+
+                auto ptb = [&] (juce::Rectangle<int> b, const char* tx, bool on, juce::Colour col)
+                {
+                    auto rf = b.toFloat();
+                    g.setColour (on ? col : skin.control.darker (0.10f)); g.fillRoundedRectangle (rf, 2.5f);
+                    g.setColour (on ? col.brighter (0.30f) : skin.control.brighter (0.12f)); g.drawRoundedRectangle (rf, 2.5f, 1.0f);
+                    g.setColour (on ? juce::Colours::white : col); g.setFont (10.0f); g.drawText (tx, b, juce::Justification::centred, false);
+                };
+                ptb (rBox (row.y), "R", t->recordArm, juce::Colour (0xffc8281a));   // rec = red
+                ptb (sBox (row.y), "S", t->solo,      juce::Colour (0xffe6c84a));   // solo = gold
+                ptb (mBox (row.y), "M", t->mute,      juce::Colour (0xff4fb0e6));   // mute = blue
+            }
             else
             {
                 g.setColour ((row.track % 2 == 0) ? skin.rowEven : skin.rowOdd);
@@ -422,14 +452,15 @@ void TimelineComponent::paint (juce::Graphics& g)
                 const juce::Colour fillCol    = sel ? (skin.clipSelFill.isTransparent() ? base : skin.clipSelFill) : base;
                 const juce::Colour outlineCol = sel ? skin.clipSelOutline : fillCol.brighter (0.32f);
                 const juce::Colour waveCol    = sel ? (skin.clipSelFill.isTransparent() ? skin.waveform : juce::Colours::white)
-                                                    : (base.getPerceivedBrightness() > 0.52f ? base.darker (0.62f) : skin.waveform);
+                                                    : (skin.ptHeaders ? skin.waveform
+                                                       : (base.getPerceivedBrightness() > 0.52f ? base.darker (0.62f) : skin.waveform));
 
                 if (sel && skin.clipSelFill.isTransparent())   // soft glow for skins without a hard selection colour
                 {
                     g.setColour (skin.accent.withAlpha (0.45f));
                     g.drawRoundedRectangle (r.expanded (2.0f), rad + 1.5f, 2.0f);
                 }
-                if (skin.flatClips) { g.setColour (fillCol); g.fillRoundedRectangle (r, rad); }
+                if (skin.flatClips || skin.ptHeaders) { g.setColour (fillCol); g.fillRoundedRectangle (r, rad); }
                 else
                 {
                     g.setGradientFill (juce::ColourGradient (fillCol.brighter (0.10f), r.getX(), r.getY(),
@@ -445,7 +476,7 @@ void TimelineComponent::paint (juce::Graphics& g)
                     auto bar = r.withHeight (13.0f);
                     g.setColour (fillCol.darker (sel ? 0.2f : 0.12f).withAlpha (0.95f));
                     g.fillRect (bar.withTrimmedTop (1.0f).reduced (1.0f, 0.0f));
-                    g.setColour (sel ? juce::Colours::white : juce::Colour (0xff8caae1));
+                    g.setColour (sel ? juce::Colours::white : (skin.ptHeaders ? labelOn (fillCol) : juce::Colour (0xff8caae1)));
                     g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f)));
                     g.drawText (t->name, bar.toNearestInt().reduced (5, 0), juce::Justification::centredLeft, true);
                     waveArea = r.withTrimmedTop (13.0f).reduced (3.0f, 2.0f);
