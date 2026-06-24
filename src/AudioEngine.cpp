@@ -2,6 +2,8 @@
 #include "FfmpegTool.h"
 #include "NativeEffects.h"
 #include <cmath>
+#include <vector>
+#include <SoundTouch.h>
 
 // Linear-interpolated value of a (time, gain) envelope at time t (clamped to the ends).
 static inline float envelopeAt (const std::vector<std::pair<double, float>>& pts, double t) noexcept
@@ -107,15 +109,25 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 if (ovEnd <= ovStart) continue;
 
                 const int dest = (int) (ovStart - blockStart);
-                const juce::int64 srcStart = (juce::int64) (c.sourceIn * rt) + (ovStart - clipStart);
+
+                const juce::AudioBuffer<float>* srcBuf = &t->audio;   // a baked stretch buffer plays in place of the source
+                juce::int64 srcStart;
+                if (c.stretched != nullptr && c.stretched->getNumSamples() > 0)
+                { srcBuf = c.stretched.get(); srcStart = (ovStart - clipStart); }            // baked buffer starts at the clip
+                else
+                { srcStart = (juce::int64) (c.sourceIn * rt) + (ovStart - clipStart); }
                 if (srcStart < 0) continue;
+                const int sCh = srcBuf->getNumChannels();
+                const int sLen = srcBuf->getNumSamples();
+                if (sCh <= 0 || sLen <= 0) continue;
 
                 int count = (int) (ovEnd - ovStart);
-                if (srcStart + count > tLen) count = (int) (tLen - srcStart);
+                if (srcStart + count > sLen) count = (int) (sLen - srcStart);
                 if (count <= 0) continue;
 
                 const juce::int64 clipLenS = clipEnd - clipStart;
-                const juce::int64 srcAvail = tLen - (juce::int64) (c.sourceIn * rt);          // samples actually decoded
+                const juce::int64 srcAvail = (c.stretched != nullptr) ? (juce::int64) sLen
+                                                                      : (sLen - (juce::int64) (c.sourceIn * rt));   // samples actually decoded
                 const juce::int64 effLen   = juce::jmax ((juce::int64) 1, juce::jmin (clipLenS, srcAvail));   // fade against the real audio end
                 const juce::int64 declick = (juce::int64) (0.005 * rt);                       // min 5 ms declick
                 const juce::int64 halfMax = juce::jmax ((juce::int64) 1, effLen / 2);
@@ -125,8 +137,8 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
 
                 for (int ch = 0; ch < numCh; ++ch)
                 {
-                    const int sch = juce::jmin (ch, tCh - 1);
-                    const float* sp = t->audio.getReadPointer (sch, (int) srcStart);
+                    const int sch = juce::jmin (ch, sCh - 1);
+                    const float* sp = srcBuf->getReadPointer (sch, (int) srcStart);
                     float* dp = scratch.getWritePointer (ch, dest);
                     for (int i = 0; i < count; ++i)
                     {
@@ -352,6 +364,53 @@ float AudioEngine::clipPeak (int trackId, double sourceIn, double duration)
     for (int ch = 0; ch < t->audio.getNumChannels(); ++ch)
         pk = juce::jmax (pk, t->audio.getMagnitude (ch, start, len));
     return pk;
+}
+
+std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio)
+{
+    if (ratio <= 0.02 || ratio > 50.0) return nullptr;
+    juce::AudioBuffer<float> region;
+    double rt = 44100.0;
+    {
+        const juce::ScopedLock sl (mixer.lock);
+        auto* t = findTrack (trackId);
+        if (t == nullptr || t->audio.getNumSamples() == 0) return nullptr;
+        rt = mixer.rate.load();
+        const int start = juce::jlimit (0, t->audio.getNumSamples() - 1, (int) (sourceIn * rt));
+        const int len   = juce::jmin (t->audio.getNumSamples() - start, juce::jmax (1, (int) (srcSeconds * rt)));
+        region.setSize (2, len);
+        for (int ch = 0; ch < 2; ++ch)
+            region.copyFrom (ch, 0, t->audio, juce::jmin (ch, t->audio.getNumChannels() - 1), start, len);
+    }
+    const int inLen = region.getNumSamples();
+    if (inLen <= 0) return nullptr;
+
+    soundtouch::SoundTouch st;
+    st.setSampleRate ((unsigned int) rt);
+    st.setChannels (2);
+    st.setTempo (1.0 / ratio);                 // tempo < 1 => longer output, pitch preserved
+    st.setSetting (SETTING_USE_AA_FILTER, 1);
+
+    std::vector<float> in ((size_t) inLen * 2);
+    for (int i = 0; i < inLen; ++i) { in[(size_t) i * 2] = region.getSample (0, i); in[(size_t) i * 2 + 1] = region.getSample (1, i); }
+    st.putSamples (in.data(), (unsigned int) inLen);
+    st.flush();
+
+    const int cap = (int) (inLen * ratio) + 16384;
+    auto out = std::make_shared<juce::AudioBuffer<float>> (2, cap);
+    out->clear();
+    std::vector<float> buf (4096 * 2);
+    int written = 0;
+    for (;;)
+    {
+        const unsigned int got = st.receiveSamples (buf.data(), 4096);
+        if (got == 0) break;
+        for (unsigned int i = 0; i < got && written < cap; ++i, ++written)
+        { out->setSample (0, written, buf[(size_t) i * 2]); out->setSample (1, written, buf[(size_t) i * 2 + 1]); }
+    }
+    if (written <= 0) return nullptr;
+    out->setSize (2, written, true, true, true);
+    return out;
 }
 
 void AudioEngine::setTrackAutomation (int trackId, const std::vector<std::pair<double, float>>& env, bool on)

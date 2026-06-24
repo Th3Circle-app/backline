@@ -1050,6 +1050,7 @@ private:
         m.addItem (7, "Crossfade with Previous");
         m.addSeparator();
         m.addItem (8, "Normalize");
+        m.addItem (9, "Time-Stretch...");
         m.addItem (6, "Reset Clip Gain (0 dB)");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
@@ -1061,6 +1062,7 @@ private:
                 else if (r == 5) applyFade (2);
                 else if (r == 7) crossfadeWithPrevious();
                 else if (r == 8) normalizeSelectedClip();
+                else if (r == 9) timeStretchSelectedClip();
                 else if (r == 6 && validClip (g, t, c))
                 {
                     pushUndo();
@@ -1127,6 +1129,56 @@ private:
         updateTimelineSize();
         timeline.repaint();
         titleLabel.setText ("Crossfaded (" + juce::String (overlap, 2) + " s)", juce::dontSendNotification);
+    }
+
+    // Pitch-preserving time-stretch: fit the selected clip to a new length (SoundTouch, baked offline).
+    void timeStretchSelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to time-stretch", juce::dontSendNotification); return; }
+        const auto& c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
+        auto* w = new juce::AlertWindow ("Time-Stretch",
+                       "Stretch this clip to a new length in seconds (pitch preserved). Source length is "
+                       + juce::String (srcSeconds, 2) + " s:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("len", juce::String (c.duration, 2));
+        w->addButton ("Stretch", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Reset",   2);
+        w->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if      (r == 1) applyClipStretch (w->getTextEditorContents ("len").getDoubleValue());
+            else if (r == 2) resetClipStretch();
+            restoreKeyFocus();
+        }), false);
+    }
+    void applyClipStretch (double targetLen)
+    {
+        if (! validClip (selGroup, selTrack, selClip) || targetLen < 0.1) return;
+        auto* tr = groups[(size_t) selGroup]->tracks[(size_t) selTrack].get();
+        AudioClip c = tr->clips[(size_t) selClip];
+        const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
+        const double ratio = juce::jlimit (0.25, 4.0, targetLen / juce::jmax (0.05, srcSeconds));
+        titleLabel.setText ("Time-stretching...", juce::dontSendNotification);
+        auto baked = audioEngine.makeStretchedClip (tr->engineId, c.sourceIn, srcSeconds, ratio);
+        if (baked == nullptr) { titleLabel.setText ("Time-stretch failed", juce::dontSendNotification); return; }
+        pushUndo();
+        c.stretched = baked; c.stretchRatio = ratio; c.duration = srcSeconds * ratio;
+        clipChanged (selGroup, selTrack, selClip, c);
+        updateTimelineSize();
+        titleLabel.setText ("Stretched to " + juce::String (c.duration, 2) + " s (" + juce::String ((int) (ratio * 100.0)) + "%)", juce::dontSendNotification);
+    }
+    void resetClipStretch()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) return;
+        AudioClip c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        if (c.stretchRatio == 1.0 && c.stretched == nullptr) return;
+        const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
+        pushUndo();
+        c.stretched.reset(); c.stretchRatio = 1.0; c.duration = srcSeconds;
+        clipChanged (selGroup, selTrack, selClip, c);
+        updateTimelineSize();
+        titleLabel.setText ("Stretch reset", juce::dontSendNotification);
     }
 
     void openAddVideo()
@@ -2460,6 +2512,7 @@ private:
                             co->setProperty ("fadeInShape", c.fadeInShape);
                             co->setProperty ("fadeOutShape", c.fadeOutShape);
                             co->setProperty ("gainDb", c.gainDb);
+                            co->setProperty ("stretch", c.stretchRatio);
                             carr.append (juce::var (co));
                         }
                         to->setProperty ("clips", carr);
@@ -2572,7 +2625,8 @@ private:
                                 tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"],
                                                        (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0),
                                                        (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0),
-                                                       (float) cv.getProperty ("gainDb", 0.0) });
+                                                       (float) cv.getProperty ("gainDb", 0.0),
+                                                       (double) cv.getProperty ("stretch", 1.0) });
                         if (tr->clips.empty() && tr->sourceLength > 0.0)
                             tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 
@@ -2586,6 +2640,9 @@ private:
                             audioEngine.restoreTrackFx (id, tv["fx"]);   // recreate EQ/Comp + hosted plugins with their state
                             { std::vector<std::pair<double, float>> env; for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });
                               audioEngine.setTrackAutomation (id, env, tr->automationOn); }
+                            for (auto& cc : tr->clips)   // re-bake time-stretched clips (baked audio isn't stored)
+                                if (cc.stretchRatio != 1.0)
+                                    cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, cc.duration / juce::jmax (0.01, cc.stretchRatio), cc.stretchRatio);
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
                             tr->thumb->setSource (new juce::FileInputSource (file));

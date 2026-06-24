@@ -8,6 +8,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # JUCE lives in external/ (cloned, not committed). See docs/ROADMAP.md.
 add_subdirectory(external/JUCE)
 
+# SoundTouch (LGPL) - offline time-stretch for "fit a cue to a scene length". Cloned in external/.
+add_library(soundtouch STATIC
+    external/soundtouch/source/SoundTouch/AAFilter.cpp
+    external/soundtouch/source/SoundTouch/FIFOSampleBuffer.cpp
+    external/soundtouch/source/SoundTouch/FIRFilter.cpp
+    external/soundtouch/source/SoundTouch/InterpolateCubic.cpp
+    external/soundtouch/source/SoundTouch/InterpolateLinear.cpp
+    external/soundtouch/source/SoundTouch/InterpolateShannon.cpp
+    external/soundtouch/source/SoundTouch/RateTransposer.cpp
+    external/soundtouch/source/SoundTouch/SoundTouch.cpp
+    external/soundtouch/source/SoundTouch/TDStretch.cpp
+    external/soundtouch/source/SoundTouch/cpu_detect_x86.cpp)
+target_include_directories(soundtouch PUBLIC external/soundtouch/include)
+target_compile_definitions(soundtouch PUBLIC SOUNDTOUCH_FLOAT_SAMPLES
+                                      PRIVATE SOUNDTOUCH_DISABLE_X86_OPTIMIZATIONS ST_NO_EXCEPTION_HANDLING)
+target_compile_options(soundtouch PRIVATE "SHELL:-include algorithm" "SHELL:-include cstring" -w)   # SoundTouch sources miss <algorithm>; silence its warnings
+
 juce_add_gui_app(LaybackStation
     PRODUCT_NAME "Layback Station"
     COMPANY_NAME "Layback"
@@ -42,6 +59,7 @@ target_link_libraries(LaybackStation
         "-framework QuartzCore"
         "-framework CoreAudioKit"
         "-framework MediaToolbox"
+        soundtouch
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
