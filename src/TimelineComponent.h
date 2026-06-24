@@ -31,6 +31,10 @@ public:
     void setSnapEnabled (bool b);
     void setSkin (const Skin& s);
     int  contentHeight() const;   // total stacked height of all rows (for a scroll viewport)
+    int  contentWidth() const;    // total pixel width at the current zoom (for a scroll viewport)
+    void setViewportWidth (int w);// visible content width of the scroll viewport (for fit/zoom)
+    void zoomBy (double factor);  // multiply the px/s zoom (>1 = zoom in)
+    void zoomToFit();             // refit the current content to the visible width
 
     std::function<void (double)> onSeek;
     std::function<void()>        onScrubStart;
@@ -50,6 +54,7 @@ public:
     std::function<void (int)>                      onActivateGroup; // group
     std::function<void()>                          onAddVideo;
     std::function<void (bool, double, double)>      onLoopChanged;
+    std::function<void()>                           onZoomChanged;   // zoom changed -> parent should resize the timeline
     std::function<void (double)>                    onLoopMenu;      // right-click lane: timeline time (seconds)
     std::function<void (int, int)>                  onTrackMenu;     // right-click an audio track header (group, track)
     std::function<void (int)>                       onGroupMenu;     // right-click a video header (group)
@@ -59,8 +64,10 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
+    void refitZoom();   // set the fixed zoom so current content fits the visible width
     enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, FadeIn, FadeOut };
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
@@ -103,6 +110,9 @@ private:
     bool   loopResizing = false;    // dragging an existing loop edge vs. creating a new region
 
     Skin   skin = Skin::forDaw (Skin::Layback);
+
+    double zoomPps = 0.0;   // fixed zoom in pixels/second (0 = not yet fit to window)
+    int    viewportW = 0;   // visible content width of the scroll viewport
 
     int                  headerW     = 184;   // widened to 280 for Logic-style headers
     static constexpr int rulerHeight = 22;

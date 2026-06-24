@@ -203,9 +203,10 @@ public:
         timeline.onLoopMenu      = [this] (double t) { showLoopMenu (t); };
         timeline.onTrackMenu     = [this] (int g, int t) { showTrackMenu (g, t); };
         timeline.onGroupMenu     = [this] (int g) { showGroupMenu (g); };
+        timeline.onZoomChanged   = [this] { updateTimelineSize(); };
         timeline.setGroups (&groups);
         timelineViewport.setViewedComponent (&timeline, false);
-        timelineViewport.setScrollBarsShown (true, false);
+        timelineViewport.setScrollBarsShown (true, true);   // vertical + horizontal (fixed-zoom scroll)
         addAndMakeVisible (timelineViewport);
 
         mixerView.setEngine (&audioEngine);
@@ -653,9 +654,13 @@ public:
 
     void updateTimelineSize()
     {
-        const int sb = timelineViewport.getScrollBarThickness();
-        const int w  = juce::jmax (200, timelineViewport.getWidth() - sb);
-        const int h  = juce::jmax (timeline.contentHeight(), timelineViewport.getHeight());
+        const int sb   = timelineViewport.getScrollBarThickness();
+        const int visW = juce::jmax (200, timelineViewport.getWidth() - sb);   // visible content width (minus vertical bar)
+        timeline.setViewportWidth (visW);
+        const int cw   = timeline.contentWidth();
+        const bool needH = cw > visW;
+        const int w = juce::jmax (visW, cw);
+        const int h = juce::jmax (timeline.contentHeight(), timelineViewport.getHeight() - (needH ? sb : 0));
         timeline.setSize (w, h);
     }
 
@@ -775,6 +780,7 @@ private:
         {
             groups[(size_t) g]->tracks[(size_t) t]->clips[(size_t) c] = nc;
             pushActiveClips (g);
+            updateTimelineSize();   // content length may have changed -> update scroll range (zoom stays fixed)
             timeline.repaint();
         }
     }
@@ -795,6 +801,7 @@ private:
                 cl.insert (cl.begin() + j + 1, b);
                 selGroup = g; selTrack = t; selClip = j + 1;
                 pushActiveClips (g);
+                updateTimelineSize();
                 timeline.setSelection (g, t, j + 1);
                 timeline.repaint();
                 return;
@@ -816,6 +823,7 @@ private:
                 else if (selClip > c)  --selClip;
             }
             timeline.setSelection (selGroup, selTrack, selClip);
+            updateTimelineSize();
             timeline.repaint();
         }
     }

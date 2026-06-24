@@ -23,8 +23,8 @@ namespace
 }
 
 //==============================================================================
-void TimelineComponent::setGroups (const std::vector<std::unique_ptr<VideoGroup>>* g) { groups = g; repaint(); }
-void TimelineComponent::setActiveGroup (int g) { activeGroup = g; repaint(); }
+void TimelineComponent::setGroups (const std::vector<std::unique_ptr<VideoGroup>>* g) { groups = g; zoomPps = 0.0; refitZoom(); repaint(); }
+void TimelineComponent::setActiveGroup (int g) { activeGroup = g; zoomPps = 0.0; refitZoom(); repaint(); }
 void TimelineComponent::setSelection (int group, int track, int clip) { selGroup = group; selTrack = track; selClip = clip; repaint(); }
 
 void TimelineComponent::setPlayhead (double seconds)
@@ -93,11 +93,50 @@ double TimelineComponent::timelineLength() const
 double TimelineComponent::pixelsPerSecond() const
 {
     const bool clipDragging = (dragMode == Drag::Move || dragMode == Drag::TrimLeft || dragMode == Drag::TrimRight);
-    if (clipDragging && dragPps > 0.0) return dragPps;
+    if (clipDragging && dragPps > 0.0) return dragPps;     // stable scale during a clip drag
+    if (zoomPps > 0.0) return zoomPps;                      // fixed zoom: editing a clip never rescales the view
+    // not yet fit to the window: derive a one-time fit from the visible width
     const double tl = timelineLength();
-    const int laneW = getWidth() - headerW;
-    if (tl <= 0.0 || laneW <= 0) return 0.0;
+    const int laneW = (viewportW > 0 ? viewportW : getWidth()) - headerW;
+    if (tl <= 0.0 || laneW <= 0) return 100.0;
     return (double) laneW / tl;
+}
+
+int TimelineComponent::contentWidth() const
+{
+    const double len = rawTimelineLength();
+    return headerW + (int) std::ceil (len * pixelsPerSecond()) + 80;   // +tail so you can scroll past the end
+}
+
+void TimelineComponent::refitZoom()
+{
+    const double len = rawTimelineLength();
+    const int laneW = viewportW - headerW;
+    if (len > 0.0 && laneW > 0) zoomPps = (double) laneW / len;
+}
+
+void TimelineComponent::setViewportWidth (int w)
+{
+    if (w <= 0 || w == viewportW) return;
+    viewportW = w;
+    if (zoomPps <= 0.0) refitZoom();   // first layout / new content: fit once, then stay fixed
+}
+
+void TimelineComponent::zoomBy (double factor)
+{
+    if (zoomPps <= 0.0) refitZoom();
+    if (zoomPps <= 0.0) zoomPps = 100.0;
+    zoomPps = juce::jlimit (1.0, 6000.0, zoomPps * factor);
+    repaint();
+    if (onZoomChanged) onZoomChanged();
+}
+
+void TimelineComponent::zoomToFit()
+{
+    zoomPps = 0.0;
+    refitZoom();
+    repaint();
+    if (onZoomChanged) onZoomChanged();
 }
 
 double TimelineComponent::xForTime (double t) const { return (double) headerW + t * pixelsPerSecond(); }
@@ -668,6 +707,18 @@ void TimelineComponent::mouseMove (const juce::MouseEvent& e)
         }
     }
     setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+void TimelineComponent::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (e.mods.isCommandDown() || e.mods.isCtrlDown())          // Cmd/Ctrl + scroll = horizontal zoom
+    {
+        if (w.deltaY > 0.0f)      zoomBy (1.0f + juce::jmin (0.5f,  w.deltaY));
+        else if (w.deltaY < 0.0f) zoomBy (1.0f / (1.0f + juce::jmin (0.5f, -w.deltaY)));
+        return;
+    }
+    if (auto* vp = findParentComponentOfClass<juce::Viewport>())  // otherwise let the viewport scroll
+        vp->mouseWheelMove (e.getEventRelativeTo (vp), w);
 }
 
 void TimelineComponent::mouseDown (const juce::MouseEvent& e)
