@@ -85,7 +85,10 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 const juce::int64 clipLenS = clipEnd - clipStart;
                 const juce::int64 srcAvail = tLen - (juce::int64) (c.sourceIn * rt);          // samples actually decoded
                 const juce::int64 effLen   = juce::jmax ((juce::int64) 1, juce::jmin (clipLenS, srcAvail));   // fade against the real audio end
-                const int fade = (int) juce::jmin ((juce::int64) (0.005 * rt), effLen / 2);   // 5 ms declick
+                const juce::int64 declick = (juce::int64) (0.005 * rt);                       // min 5 ms declick
+                const juce::int64 halfMax = juce::jmax ((juce::int64) 1, effLen / 2);
+                const juce::int64 fIn  = juce::jlimit ((juce::int64) 1, halfMax, juce::jmax (declick, (juce::int64) (c.fadeIn  * rt)));
+                const juce::int64 fOut = juce::jlimit ((juce::int64) 1, halfMax, juce::jmax (declick, (juce::int64) (c.fadeOut * rt)));
 
                 for (int ch = 0; ch < numCh; ++ch)
                 {
@@ -94,14 +97,11 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                     float* dp = scratch.getWritePointer (ch, dest);
                     for (int i = 0; i < count; ++i)
                     {
+                        const juce::int64 cl = (ovStart - clipStart) + i;
                         float fdf = 1.0f;
-                        if (fade > 0)
-                        {
-                            const juce::int64 cl = (ovStart - clipStart) + i;
-                            if (cl < fade)               fdf = (float) cl / (float) fade;
-                            else if (cl > effLen - fade) fdf = (float) (effLen - cl) / (float) fade;
-                            fdf = juce::jlimit (0.0f, 1.0f, fdf);
-                        }
+                        if (cl < fIn)                fdf = (float) cl / (float) fIn;
+                        else if (cl > effLen - fOut) fdf = (float) (effLen - cl) / (float) fOut;
+                        fdf = juce::jlimit (0.0f, 1.0f, fdf);
                         dp[i] += sp[i] * fdf;
                     }
                 }

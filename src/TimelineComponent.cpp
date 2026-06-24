@@ -457,6 +457,30 @@ void TimelineComponent::paint (juce::Graphics& g)
                     t->thumb->drawChannels (g, waveArea.toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
 
+                {                                              // fade ramps + grab handles
+                    const float pps = (float) pixelsPerSecond();
+                    if (c.fadeIn > 0.0)
+                    {
+                        const float fw = juce::jmin ((float) c.fadeIn * pps, r.getWidth());
+                        juce::Path p; p.addTriangle (r.getX(), r.getY(), r.getX() + fw, r.getY(), r.getX(), r.getBottom());
+                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (p);
+                        g.setColour (juce::Colours::white.withAlpha (0.75f)); g.drawLine (r.getX(), r.getBottom(), r.getX() + fw, r.getY(), 1.2f);
+                    }
+                    if (c.fadeOut > 0.0)
+                    {
+                        const float fw = juce::jmin ((float) c.fadeOut * pps, r.getWidth());
+                        juce::Path p; p.addTriangle (r.getRight() - fw, r.getY(), r.getRight(), r.getY(), r.getRight(), r.getBottom());
+                        g.setColour (juce::Colours::black.withAlpha (0.32f)); g.fillPath (p);
+                        g.setColour (juce::Colours::white.withAlpha (0.75f)); g.drawLine (r.getRight() - fw, r.getY(), r.getRight(), r.getBottom(), 1.2f);
+                    }
+                    if (r.getWidth() > 30.0f)                   // little corner handles to show fades are draggable
+                    {
+                        g.setColour (juce::Colours::white.withAlpha (0.55f));
+                        g.fillRect (r.getX() + (float) edgePx, r.getY() + 1.0f, 5.0f, 3.0f);
+                        g.fillRect (r.getRight() - (float) edgePx - 5.0f, r.getY() + 1.0f, 5.0f, 3.0f);
+                    }
+                }
+
                 g.setColour (outlineCol);
                 g.drawRoundedRectangle (r, rad, sel ? 2.0f : 1.0f);
 
@@ -481,7 +505,7 @@ void TimelineComponent::paint (juce::Graphics& g)
         {
             g.setColour (skin.headerBottom);
             g.fillRect (0, row.y, headerW, row.h);
-            g.setColour (skin.audioStrip.brighter (0.1f));
+            g.setColour (juce::Colour (0xff9cc2f2));            // readable, clickable
             g.setFont (12.0f);
             g.drawText ("+  Import Track", 24, row.y, headerW - 28, row.h, juce::Justification::centredLeft, false);
         }
@@ -489,7 +513,7 @@ void TimelineComponent::paint (juce::Graphics& g)
         {
             g.setColour (skin.panel);
             g.fillRect (0, row.y, w, row.h);
-            g.setColour (skin.videoStrip.brighter (0.1f));
+            g.setColour (juce::Colour (0xff9cc2f2));
             g.setFont (12.5f);
             g.drawText ("+  Add Video", 12, row.y, headerW - 16, row.h, juce::Justification::centredLeft, false);
         }
@@ -711,9 +735,14 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
             if (onClipSelected) onClipSelected (hit->group, hit->track, hitClip);
 
             auto r = clipRectAt (hit->y, t->clips[(size_t) hitClip]);
+            const bool top   = ((float) e.y <= r.getY() + 12.0f);
             const bool left  = ((float) e.x <= r.getX() + edgePx);
             const bool right = ((float) e.x >= r.getRight() - edgePx);
-            dragMode      = left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;
+            const bool fadeInZone  = top && ! left  && (float) e.x < r.getX() + edgePx + 20.0f;
+            const bool fadeOutZone = top && ! right && (float) e.x > r.getRight() - edgePx - 20.0f;
+            dragMode = fadeInZone  ? Drag::FadeIn
+                     : fadeOutZone ? Drag::FadeOut
+                     : left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;
             dragGroup     = hit->group;
             dragTrack     = hit->track;
             dragClip      = hitClip;
@@ -761,6 +790,19 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
             repaint();
             if (onLoopChanged) onLoopChanged (true, loopStart, loopEnd);
         }
+        return;
+    }
+
+    if (dragMode == Drag::FadeIn || dragMode == Drag::FadeOut)
+    {
+        if (! draggedClip) { draggedClip = true; if (onEditBegin) onEditBegin(); }
+        const double dt = (dragPps > 0.0) ? (double) (e.x - dragStartX) / dragPps : 0.0;
+        AudioClip nc = dragStartClip;
+        const double maxF = juce::jmax (0.0, dragStartClip.duration * 0.95);
+        if (dragMode == Drag::FadeIn) nc.fadeIn  = juce::jlimit (0.0, maxF, dragStartClip.fadeIn  + dt);
+        else                          nc.fadeOut = juce::jlimit (0.0, maxF, dragStartClip.fadeOut - dt);
+        if (onClipChanged) onClipChanged (dragGroup, dragTrack, dragClip, nc);
+        repaint();
         return;
     }
 
@@ -815,7 +857,8 @@ void TimelineComponent::mouseUp (const juce::MouseEvent&)
         return;
     }
 
-    if (dragMode == Drag::Move || dragMode == Drag::TrimLeft || dragMode == Drag::TrimRight)
+    if (dragMode == Drag::Move || dragMode == Drag::TrimLeft || dragMode == Drag::TrimRight
+        || dragMode == Drag::FadeIn || dragMode == Drag::FadeOut)
     {
         const bool wasClick = ! draggedClip;
         const int  cg = dragGroup, ct = dragTrack, cc = dragClip;

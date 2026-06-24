@@ -61,7 +61,7 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
 
 private:
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol };
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, FadeIn, FadeOut };
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
     int    numGroups() const;

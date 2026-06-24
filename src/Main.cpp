@@ -1677,6 +1677,8 @@ private:
                             co->setProperty ("start", c.timelineStart);
                             co->setProperty ("in", c.sourceIn);
                             co->setProperty ("dur", c.duration);
+                            co->setProperty ("fadeIn", c.fadeIn);
+                            co->setProperty ("fadeOut", c.fadeOut);
                             carr.append (juce::var (co));
                         }
                         to->setProperty ("clips", carr);
@@ -1778,7 +1780,8 @@ private:
                         tr->beatMarkers  = varToDoubles (tv["beats"]);
                         if (auto* carr = tv["clips"].getArray())
                             for (auto& cv : *carr)
-                                tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"] });
+                                tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"],
+                                                       (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0) });
                         if (tr->clips.empty() && tr->sourceLength > 0.0)
                             tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 

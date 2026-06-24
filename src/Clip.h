@@ -9,6 +9,8 @@ struct AudioClip
     double timelineStart = 0.0;   // position on the timeline (seconds)
     double sourceIn      = 0.0;   // in-point within the source song (seconds)
     double duration      = 0.0;   // length on the timeline / source consumed
+    double fadeIn        = 0.0;   // fade-in length (seconds) from the clip start
+    double fadeOut       = 0.0;   // fade-out length (seconds) to the clip end
 
     double timelineEnd() const { return timelineStart + duration; }
 };
