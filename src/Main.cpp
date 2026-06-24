@@ -65,6 +65,26 @@ struct PluginWindow : public juce::DocumentWindow
 };
 
 //==============================================================================
+/** The Plugins window: browse / scan available AU & VST3 plugins (search, failure
+    list, rescan), backed by the engine's KnownPluginList. */
+struct PluginListWindow : public juce::DocumentWindow
+{
+    std::function<void()> onClose;
+    PluginListWindow (juce::AudioPluginFormatManager& fmts, juce::KnownPluginList& list,
+                      const juce::File& deadMans, juce::Colour bg)
+        : juce::DocumentWindow ("Plugins", bg, juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        setContentOwned (new juce::PluginListComponent (fmts, list, deadMans, nullptr, true), true);
+        setResizable (true, false);
+        setSize (660, 480);
+        setTopLeftPosition (180, 120);
+        setVisible (true);
+    }
+    void closeButtonPressed() override { if (onClose) onClose(); }
+};
+
+//==============================================================================
 /** Floating pop-out that shows the synced video while you scrub the timeline,
     so the main window stays a pure DAW surface. */
 class VideoWindow : public juce::DocumentWindow
@@ -118,7 +138,7 @@ public:
         logicBar.onRewind = [this] { seekAll (0.0); };
         logicBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
         logicBar.onPlay   = [this] { togglePlay(); };
-        logicBar.onRecord = [this] { /* recording is Phase C */ };
+        logicBar.onRecord = [this] { toggleSelectedRecordArm(); };
         logicBar.onCycle  = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
         logicBar.isPlaying = [this] { return playing; };
         logicBar.isCycle   = [this] { return loopEnabled; };
@@ -136,7 +156,7 @@ public:
         ptBar.onRewind = [this] { seekAll (0.0); };
         ptBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
         ptBar.onPlay   = [this] { togglePlay(); };
-        ptBar.onRecord = [this] { /* recording is Phase C */ };
+        ptBar.onRecord = [this] { toggleSelectedRecordArm(); };
         ptBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
@@ -263,6 +283,7 @@ public:
         setLookAndFeel (nullptr);
         if (alive) *alive = false;   // in-flight ffmpeg/scan worker callbacks bail instead of touching a dead window
         videoWindow.reset();         // release the video pop-out before the VideoView member is destroyed
+        pluginListWindow.reset();    // close the plugin browser before the engine list it edits goes away
         closeAllPluginWindows();     // delete editors while their processors (in the engine) are still alive
         removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
@@ -1217,7 +1238,8 @@ private:
         };
         auto fxItems = [&] { m.addItem (9011, "Insert EQ on Selected Track", hasTrack);
                              m.addItem (9012, "Insert Compressor on Selected Track", hasTrack); };
-        auto rescan  = [&] { m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
+        auto pluginTools = [&] { m.addItem (9014, "Plugins Window...");
+                                 m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
 
         if (name == "File")
         {
@@ -1251,6 +1273,8 @@ private:
             m.addItem (9010, "Import Audio Track...", activeGroup >= 0);
             m.addSeparator();
             fxItems();
+            m.addSeparator();
+            pluginTools();
         }
         else if (name == "Create")          // Ableton
         {
@@ -1258,12 +1282,14 @@ private:
             m.addItem (9010, "Import Audio Track...", activeGroup >= 0);
             m.addSeparator();
             fxItems();
+            m.addSeparator();
+            pluginTools();
         }
         else if (name == "Mix" || name == "AudioSuite")   // Logic / Pro Tools
         {
             fxItems();
             m.addSeparator();
-            rescan();
+            pluginTools();
         }
         else if (name == "Transport" || name == "Navigate")
         {
@@ -1305,7 +1331,7 @@ private:
             m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addSeparator();
-            rescan();
+            pluginTools();
             m.addSeparator();
             addSkin (m);
         }
@@ -1333,8 +1359,9 @@ private:
             case 9005: exportVideo();   break;
             case 9006: exportAudio();   break;
             case 9010: if (activeGroup >= 0) importTrack (activeGroup); break;
-            case 9011: if (validTrack (selGroup, selTrack)) { audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 0); refreshMixer(); } break;
-            case 9012: if (validTrack (selGroup, selTrack)) { audioEngine.addNativeEffect (groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId, 1); refreshMixer(); } break;
+            case 9011: insertEffectAndEdit (0); break;
+            case 9012: insertEffectAndEdit (1); break;
+            case 9014: openPluginListWindow(); break;
             case 9013: startPluginScan(); break;
             case 9020: applyKeyProfile (KeyProfile::Layback);  break;
             case 9021: applyKeyProfile (KeyProfile::Logic);    break;
@@ -1468,6 +1495,47 @@ private:
 
     void closeAllPluginWindows() { pluginWindows.clear(); }
 
+    // The Plugins window: scan/browse available AU & VST3 plugins.
+    void openPluginListWindow()
+    {
+        if (pluginListWindow != nullptr) { pluginListWindow->toFront (true); return; }
+        const juce::File dead = pluginListFile().getSiblingFile ("scan_crashlog.txt");
+        pluginListWindow = std::make_unique<PluginListWindow> (audioEngine.getPluginFormats(),
+                                                               audioEngine.getKnownPlugins(), dead, laf.skin.panel);
+        auto a = alive;
+        pluginListWindow->onClose = [this, a]
+        {
+            if (! a->load()) return;
+            persistPluginList();
+            pluginsScanned = audioEngine.getKnownPlugins().getNumTypes() > 0;
+            pluginListWindow.reset();
+            restoreKeyFocus();
+        };
+    }
+
+    // Insert a native effect (0 = EQ, 1 = Compressor) on the selected track and open its editor.
+    void insertEffectAndEdit (int which)
+    {
+        if (! validTrack (selGroup, selTrack)) { titleLabel.setText ("Select a track first", juce::dontSendNotification); return; }
+        const int engineId = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->engineId;
+        audioEngine.addNativeEffect (engineId, which);
+        openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1);
+        refreshMixer();
+    }
+
+    // Transport Record: arm the selected track (audio capture itself is a later phase).
+    void toggleSelectedRecordArm()
+    {
+        if (! validTrack (selGroup, selTrack))
+        { titleLabel.setText ("Select an audio track to record-arm", juce::dontSendNotification); return; }
+        auto* tr = groups[(size_t) selGroup]->tracks[(size_t) selTrack].get();
+        tr->recordArm = ! tr->recordArm;
+        titleLabel.setText (tr->recordArm ? "Track armed for record (capture in a later build)"
+                                          : "Track record-disarmed", juce::dontSendNotification);
+        timeline.repaint();
+        if (mixerVisible) mixerView.syncFromModel();
+    }
+
     //== plugin scanning + persistence ==
     juce::File pluginListFile() const
     {
@@ -1562,6 +1630,7 @@ private:
         }
 
         m.addSeparator();
+        m.addItem (6, "Plugins window...");
         m.addItem (5, scanning ? "Scanning plugins..." : "Rescan plugins", ! scanning);
         m.addItem (1, "Delete track");
 
@@ -1569,15 +1638,18 @@ private:
         {
             if      (r == 1)    deleteTrack (g, t);
             else if (r == 5)    startPluginScan();
-            else if (r == 2001) audioEngine.addNativeEffect (engineId, 0);
-            else if (r == 2002) audioEngine.addNativeEffect (engineId, 1);
+            else if (r == 6)    openPluginListWindow();
+            else if (r == 2001) { audioEngine.addNativeEffect (engineId, 0); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
+            else if (r == 2002) { audioEngine.addNativeEffect (engineId, 1); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
             else if (r >= 3000 && r < 4000)
             {
                 const auto it = pluginMenuMap.find (r);
                 if (it != pluginMenuMap.end())
                 {
                     juce::String err;
-                    if (! audioEngine.addHostedPlugin (engineId, it->second, err))
+                    if (audioEngine.addHostedPlugin (engineId, it->second, err))
+                        openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1);   // pop the editor right away
+                    else
                         titleLabel.setText ("Plugin failed to load: " + err, juce::dontSendNotification);
                 }
             }
@@ -2016,6 +2088,7 @@ private:
     bool videoWindowOpen = false;
     bool videoAudible = false;                  // is the video's audio currently in the mix (for the full-mix meter)
     std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
+    std::unique_ptr<PluginListWindow> pluginListWindow;
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;
     bool pluginsScanned = false;
