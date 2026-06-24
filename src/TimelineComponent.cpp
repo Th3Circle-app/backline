@@ -278,7 +278,7 @@ void TimelineComponent::paint (juce::Graphics& g)
 
                 g.setColour (active ? skin.text : skin.text.darker (0.15f));
                 g.setFont (12.0f);
-                g.drawText ("VIDEO " + juce::String (row.group + 1), 28, row.y + 7, headerW - 90, 16, juce::Justification::centredLeft, true);
+                g.drawText (skin.ptHeaders ? juce::String ("Movie") : ("VIDEO " + juce::String (row.group + 1)), 28, row.y + 7, headerW - 90, 16, juce::Justification::centredLeft, true);
                 g.setColour (skin.muted);
                 g.setFont (10.5f);
                 g.drawText (grp->name, 28, row.y + 25, headerW - 36, 16, juce::Justification::centredLeft, true);

@@ -19,6 +19,7 @@ struct Skin
     bool      clipTitleBar = false;  // draw a region name strip atop each clip (DAW regions)
     bool      tintLanes = false;     // tint the whole lane with the track colour (Pro Tools)
     bool      logicHeaders = false;  // Logic-style track headers (colour icon + name + M/S/R bottom row)
+    bool      ptHeaders = false;     // Pro Tools styling cues (e.g. "Movie" track label vs "VIDEO n")
     bool      barsRuler = false;     // bars/beats ruler (Logic) vs min:sec
     juce::Colour clipSelFill;                              // selected-region fill (transparent => brighten base)
     juce::Colour clipSelOutline = juce::Colours::white;    // selected-region outline
@@ -72,7 +73,7 @@ struct Skin
                 s.audioClip = juce::Colour (0xff1f8f6f); s.audioStrip = juce::Colour (0xff27c79a);
                 s.waveform = juce::Colour (0xffaef0d6); s.timecodeText = juce::Colour (0xff36e0a8); s.timecodeBg = juce::Colour (0xff0a0a0a);
                 s.flatClips = false; s.buttonLook = 2; s.buttonRadius = 3.0f; s.layout = 3;
-                s.clipPalette = 1; s.clipTitleBar = true; s.tintLanes = true; break;   // beveled, per-track pastel lanes
+                s.clipPalette = 1; s.clipTitleBar = true; s.tintLanes = true; s.ptHeaders = true; break;   // beveled, pastel lanes
 
             case Ableton:   // medium grey, orange accent, FLAT clips with dark waveforms
                 s.name = "Ableton Live";
