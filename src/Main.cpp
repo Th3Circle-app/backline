@@ -8,6 +8,7 @@
 #include "TimelineComponent.h"
 #include "AudioEngine.h"
 #include "FfmpegTool.h"
+#include "StemSplitter.h"
 #include "Clip.h"
 #include "Track.h"
 #include "LaybackLookAndFeel.h"
@@ -434,6 +435,78 @@ public:
         timeline.setSelection (selGroup, selTrack, selClip);
         resized();
         timeline.repaint();
+    }
+
+    //== Stem splitting (built-in source separation via Demucs) ==
+    // Add a stem as a new track, placed to match the source track's clips. Returns the new track index (-1 on failure).
+    int importStemTrack (int g, const juce::File& f, const juce::String& name, const std::vector<AudioClip>& clipsToUse)
+    {
+        if (! validGroup (g) || ! f.existsAsFile()) return -1;
+        double len = 0.0;
+        const int id = audioEngine.addTrack (f, len);
+        if (id < 0) return -1;
+
+        auto tr = std::make_unique<AudioTrack>();
+        tr->name = name; tr->file = f; tr->engineId = id; tr->sourceLength = len;
+        if (clipsToUse.empty())
+            tr->clips.push_back ({ 0.0, 0.0, len });
+        else
+            for (auto c : clipsToUse)   // stems share the source's timebase -> reuse its clip placement
+            {
+                c.sourceIn = juce::jlimit (0.0, len, c.sourceIn);
+                c.duration = juce::jlimit (0.0, len - c.sourceIn, c.duration);
+                if (c.duration > 0.01) tr->clips.push_back (c);
+            }
+        tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
+        tr->thumb->addChangeListener (this);
+        tr->thumb->setSource (new juce::FileInputSource (f));
+
+        groups[(size_t) g]->tracks.push_back (std::move (tr));
+        audioEngine.setTrackClips (id, (g == activeGroup) ? groups[(size_t) g]->tracks.back()->clips : std::vector<AudioClip>{});
+        return (int) groups[(size_t) g]->tracks.size() - 1;
+    }
+
+    void splitTrackIntoStems (int g, int t, bool sixStem)
+    {
+        if (splitting) { titleLabel.setText ("A stem split is already running...", juce::dontSendNotification); return; }
+        if (! validTrack (g, t)) { titleLabel.setText ("Select an audio track to split into stems", juce::dontSendNotification); return; }
+        if (! StemSplitter::isInstalled()) { titleLabel.setText ("Stem splitter is still setting up - try again in a moment", juce::dontSendNotification); return; }
+
+        auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
+        const juce::File src = tr->file;
+        if (! src.existsAsFile()) { titleLabel.setText ("This track has no source file to split", juce::dontSendNotification); return; }
+
+        const juce::String baseName = tr->name;
+        const std::vector<AudioClip> clips = tr->clips;   // place each stem exactly where the source sits
+        const juce::File outDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("LaybackStems")
+                                     .getChildFile (juce::String ((juce::int64) juce::Time::getMillisecondCounter()));
+
+        splitting = true;
+        titleLabel.setText (juce::String ("Splitting into ") + (sixStem ? "6" : "4")
+                            + " stems (offline render, give it a minute)...", juce::dontSendNotification);
+
+        auto a = alive;
+        std::thread ([this, a, src, outDir, sixStem, g, baseName, clips]
+        {
+            juce::String err; juce::Array<juce::File> stems;
+            const bool ok = StemSplitter::separate (src, outDir, sixStem, err, stems);
+            juce::MessageManager::callAsync ([this, a, ok, err, stems, g, baseName, clips]
+            {
+                if (! a->load()) return;
+                splitting = false;
+                if (! ok) { titleLabel.setText ("Stem split failed: " + err, juce::dontSendNotification); return; }
+                int first = -1;
+                for (auto& f : stems)
+                {
+                    const int idx = importStemTrack (g, f, baseName + " - " + f.getFileNameWithoutExtension(), clips);
+                    if (first < 0) first = idx;
+                }
+                if (first >= 0) { selGroup = g; selTrack = first; selClip = 0; timeline.setSelection (selGroup, selTrack, selClip); }
+                clearHistory(); applyMixGains(); refreshMixer(); updateTimelineSize(); resized(); timeline.repaint();
+                titleLabel.setText (juce::String ((int) stems.size()) + " stems added from \"" + baseName + "\"", juce::dontSendNotification);
+            });
+        }).detach();
     }
 
     void paint (juce::Graphics& g) override
@@ -1248,7 +1321,9 @@ private:
             pm.addSubMenu ("Skin", sk);
         };
         auto fxItems = [&] { m.addItem (9011, "Insert EQ on Selected Track", hasTrack);
-                             m.addItem (9012, "Insert Compressor on Selected Track", hasTrack); };
+                             m.addItem (9012, "Insert Compressor on Selected Track", hasTrack);
+                             m.addItem (9015, "Split Selected Track into Stems (6: voc/drm/bass/gtr/pno/oth)", hasTrack && ! splitting);
+                             m.addItem (9016, "Split Selected Track into Stems (4: voc/drm/bass/oth)", hasTrack && ! splitting); };
         auto pluginTools = [&] { m.addItem (9014, "Plugins Window...");
                                  m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
 
@@ -1373,6 +1448,8 @@ private:
             case 9011: insertEffectAndEdit (0); break;
             case 9012: insertEffectAndEdit (1); break;
             case 9014: openPluginListWindow(); break;
+            case 9015: splitTrackIntoStems (selGroup, selTrack, true);  break;
+            case 9016: splitTrackIntoStems (selGroup, selTrack, false); break;
             case 9013: startPluginScan(); break;
             case 9020: applyKeyProfile (KeyProfile::Layback);  break;
             case 9021: applyKeyProfile (KeyProfile::Logic);    break;
@@ -1582,12 +1659,17 @@ private:
         m.addSeparator();
         m.addItem (3, "Plugins Window...");
         m.addItem (4, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning);
+        m.addSeparator();
+        m.addItem (5, "Split Track into Stems (6)", ht && ! splitting);
+        m.addItem (6, "Split Track into Stems (4)", ht && ! splitting);
         m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (logicMFunc)), [this] (int r)
         {
             if      (r == 1) insertEffectAndEdit (0);
             else if (r == 2) insertEffectAndEdit (1);
             else if (r == 3) openPluginListWindow();
             else if (r == 4) startPluginScan();
+            else if (r == 5) splitTrackIntoStems (selGroup, selTrack, true);
+            else if (r == 6) splitTrackIntoStems (selGroup, selTrack, false);
             restoreKeyFocus();
         });
     }
@@ -1687,6 +1769,9 @@ private:
         insert.addSubMenu ("Audio Units / VST3", hosted);
 
         juce::PopupMenu m;
+        m.addItem (7, "Split into Stems - 6 (vocals/drums/bass/guitar/piano/other)", ! splitting);
+        m.addItem (8, "Split into Stems - 4 (vocals/drums/bass/other)", ! splitting);
+        m.addSeparator();
         m.addSubMenu ("Insert effect", insert);
 
         const int pc = audioEngine.trackPluginCount (engineId);
@@ -1711,6 +1796,8 @@ private:
         m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t, engineId] (int r)
         {
             if      (r == 1)    deleteTrack (g, t);
+            else if (r == 7)    splitTrackIntoStems (g, t, true);
+            else if (r == 8)    splitTrackIntoStems (g, t, false);
             else if (r == 5)    startPluginScan();
             else if (r == 6)    openPluginListWindow();
             else if (r == 2001) { audioEngine.addNativeEffect (engineId, 0); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
@@ -2167,6 +2254,7 @@ private:
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;
     bool pluginsScanned = false;
+    bool splitting = false;   // a stem split is in progress (offline render on a worker thread)
 
     MixerView mixerView;
     bool      mixerVisible = false;
