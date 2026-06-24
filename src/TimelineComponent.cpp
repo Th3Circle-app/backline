@@ -232,26 +232,59 @@ void TimelineComponent::paint (juce::Graphics& g)
             const auto* grp = (*groups)[(size_t) row.group].get();
             const bool active = (row.group == activeGroup);
 
-            g.setColour (active ? skin.activeRow : skin.rowEven);
-            g.fillRect (0, row.y, headerW, rowHeight);
-            g.setColour (active ? skin.activeStrip : skin.videoStrip);
-            g.fillRect (0, row.y, 3, rowHeight);
+            if (skin.logicHeaders)   // flat Logic "Movie" global-track row (no VIDEO banner)
+            {
+                g.setColour (active ? juce::Colour (0xff828282) : skin.rowEven);
+                g.fillRect (0, row.y, headerW, rowHeight);
+                g.setColour (skin.windowBg.darker (0.2f));
+                g.fillRect (0, row.y + rowHeight - 1, headerW, 1);
 
-            auto dr = disclosureRectAt (row.y).toFloat();
-            g.setColour (skin.text.darker (0.1f));
-            juce::Path tri;
-            if (grp->expanded) tri.addTriangle (dr.getX(), dr.getY(), dr.getRight(), dr.getY(), dr.getCentreX(), dr.getBottom());
-            else               tri.addTriangle (dr.getX(), dr.getY(), dr.getX(), dr.getBottom(), dr.getRight(), dr.getCentreY());
-            g.fillPath (tri);
+                auto dr = disclosureRectAt (row.y).toFloat();
+                g.setColour (skin.text.darker (0.1f));
+                juce::Path tri;
+                if (grp->expanded) tri.addTriangle (dr.getX(), dr.getY(), dr.getRight(), dr.getY(), dr.getCentreX(), dr.getBottom());
+                else               tri.addTriangle (dr.getX(), dr.getY(), dr.getX(), dr.getBottom(), dr.getRight(), dr.getCentreY());
+                g.fillPath (tri);
 
-            g.setColour (active ? skin.text : skin.text.darker (0.15f));
-            g.setFont (12.0f);
-            g.drawText ("VIDEO " + juce::String (row.group + 1), 28, row.y + 7, headerW - 90, 16, juce::Justification::centredLeft, true);
-            g.setColour (skin.muted);
-            g.setFont (10.5f);
-            g.drawText (grp->name, 28, row.y + 25, headerW - 36, 16, juce::Justification::centredLeft, true);
+                juce::Rectangle<float> ic (26.0f, (float) row.y + 7.0f, 26.0f, 26.0f);   // film icon
+                g.setColour (juce::Colour (0xff6a6a6a)); g.fillRoundedRectangle (ic, 5.0f);
+                g.setColour (juce::Colour (0xff2a2a2a));
+                for (int k = 0; k < 4; ++k)
+                { g.fillRect (ic.getX() + 2.5f, ic.getY() + 3.0f + (float) k * 6.0f, 3.0f, 3.0f);
+                  g.fillRect (ic.getRight() - 5.5f, ic.getY() + 3.0f + (float) k * 6.0f, 3.0f, 3.0f); }
 
-            drawMS (g, row.y, grp->videoMute, grp->videoSolo);
+                g.setColour (skin.text);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (12.5f)));
+                g.drawText ("Movie", 58, row.y + 7, headerW - 64, 16, juce::Justification::centredLeft, true);
+                g.setColour (skin.muted);
+                g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f)));
+                g.drawText (grp->name, 58, row.y + 24, headerW - 64, 14, juce::Justification::centredLeft, true);
+
+                drawMS (g, row.y, grp->videoMute, grp->videoSolo);
+            }
+            else
+            {
+                g.setColour (active ? skin.activeRow : skin.rowEven);
+                g.fillRect (0, row.y, headerW, rowHeight);
+                g.setColour (active ? skin.activeStrip : skin.videoStrip);
+                g.fillRect (0, row.y, 3, rowHeight);
+
+                auto dr = disclosureRectAt (row.y).toFloat();
+                g.setColour (skin.text.darker (0.1f));
+                juce::Path tri;
+                if (grp->expanded) tri.addTriangle (dr.getX(), dr.getY(), dr.getRight(), dr.getY(), dr.getCentreX(), dr.getBottom());
+                else               tri.addTriangle (dr.getX(), dr.getY(), dr.getX(), dr.getBottom(), dr.getRight(), dr.getCentreY());
+                g.fillPath (tri);
+
+                g.setColour (active ? skin.text : skin.text.darker (0.15f));
+                g.setFont (12.0f);
+                g.drawText ("VIDEO " + juce::String (row.group + 1), 28, row.y + 7, headerW - 90, 16, juce::Justification::centredLeft, true);
+                g.setColour (skin.muted);
+                g.setFont (10.5f);
+                g.drawText (grp->name, 28, row.y + 25, headerW - 36, 16, juce::Justification::centredLeft, true);
+
+                drawMS (g, row.y, grp->videoMute, grp->videoSolo);
+            }
 
             auto clip = videoClipRectAt (row.y, grp->duration);
             if (clip.getWidth() > 1.0f)
