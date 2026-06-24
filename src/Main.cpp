@@ -261,7 +261,7 @@ public:
         commandManager.registerAllCommandsForTarget (this);
         addKeyListener (commandManager.getKeyMappings());
         setWantsKeyboardFocus (true);
-        applyKeyProfile (KeyProfile::Logic);   // boot into the Logic station
+        applyKeyProfile (loadSavedSkin());     // restore the user's last-used skin (Logic if unset)
 
         setApplicationCommandManagerToWatch (&commandManager);   // refreshes command-item states
         juce::MenuBarModel::setMacMainMenu (this);               // File / Edit / Track / Transport / Station at the top
@@ -1286,6 +1286,7 @@ private:
         applySkinForProfile (p);   // switching the station also reskins the app to that DAW
         menuItemsChanged();        // rebuild the menu bar to that DAW's menu set
         grabKeyboardFocus();
+        saveSettings();            // remember this skin for next launch
     }
 
     void applySkinForProfile (KeyProfile p)
@@ -1515,6 +1516,27 @@ private:
             case 9050: toggleMixer(); break;
             default: break;
         }
+    }
+
+    //== global app settings (remember the chosen skin across launches) ==
+    juce::File settingsFile() const
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Layback").getChildFile ("settings.json");
+    }
+    void saveSettings()
+    {
+        const auto f = settingsFile();
+        f.getParentDirectory().createDirectory();
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("skin", (int) keyProfile);
+        f.replaceWithText (juce::JSON::toString (juce::var (o)));
+    }
+    KeyProfile loadSavedSkin()   // defaults to Logic if no setting yet
+    {
+        const auto v = juce::JSON::parse (settingsFile().loadFileAsString());
+        const int s = v.isObject() ? (int) v.getProperty ("skin", (int) KeyProfile::Logic) : (int) KeyProfile::Logic;
+        return (KeyProfile) juce::jlimit (0, 3, s);
     }
 
     void showKeysMenu()
@@ -2007,6 +2029,7 @@ private:
                 root->setProperty ("loopStart", loopStart);
                 root->setProperty ("loopEnd", loopEnd);
                 root->setProperty ("masterGain", audioEngine.getMasterGain());
+                root->setProperty ("masterMute", audioEngine.getMasterMute());
 
                 juce::var garr;
                 for (auto& g : groups)
@@ -2029,6 +2052,9 @@ private:
                         to->setProperty ("sourceLength", t->sourceLength);
                         to->setProperty ("mute", t->mute);
                         to->setProperty ("solo", t->solo);
+                        to->setProperty ("volume", t->volume);
+                        to->setProperty ("pan", t->pan);
+                        to->setProperty ("recordArm", t->recordArm);
                         to->setProperty ("beats", doublesToVar (t->beatMarkers));
 
                         juce::var carr;
@@ -2138,8 +2164,11 @@ private:
                         tr->file         = file;
                         tr->engineId     = id;          // keep the track even on failure so its edits survive a round-trip
                         tr->sourceLength = (double) tv.getProperty ("sourceLength", 0.0); if (tr->sourceLength <= 0.0) tr->sourceLength = len;
-                        tr->mute         = (bool) tv.getProperty ("mute", false);
-                        tr->solo         = (bool) tv.getProperty ("solo", false);
+                        tr->mute         = (bool)  tv.getProperty ("mute", false);
+                        tr->solo         = (bool)  tv.getProperty ("solo", false);
+                        tr->volume       = (float) tv.getProperty ("volume", 1.0);
+                        tr->pan          = (float) tv.getProperty ("pan", 0.0);
+                        tr->recordArm    = (bool)  tv.getProperty ("recordArm", false);
                         tr->beatMarkers  = varToDoubles (tv["beats"]);
                         if (auto* carr = tv["clips"].getArray())
                             for (auto& cv : *carr)
@@ -2155,6 +2184,7 @@ private:
                         }
                         else
                         {
+                            audioEngine.setTrackPan (id, tr->pan);   // restore pan (volume is applied via applyMixGains)
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
                             tr->thumb->setSource (new juce::FileInputSource (file));
@@ -2169,6 +2199,7 @@ private:
         loopStart   = (double) root.getProperty ("loopStart", 0.0);
         loopEnd     = (double) root.getProperty ("loopEnd", 0.0);
         audioEngine.setMasterGain ((float) root.getProperty ("masterGain", 1.0));
+        audioEngine.setMasterMute ((bool) root.getProperty ("masterMute", false));
         if (groups.empty()) { loopEnabled = false; loopStart = loopEnd = 0.0; }
         loopToggle.setToggleState (loopEnabled, juce::dontSendNotification);
 

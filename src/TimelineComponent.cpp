@@ -677,6 +677,7 @@ void TimelineComponent::seekFromMouse (const juce::MouseEvent& e)
 
 void TimelineComponent::mouseMove (const juce::MouseEvent& e)
 {
+    if (groups == nullptr) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
     if (e.x < headerW) { setMouseCursor (juce::MouseCursor::NormalCursor); return; }
 
     if (e.y < rulerHeight)   // ruler: show a resize cursor when hovering an existing loop edge
@@ -728,6 +729,7 @@ void TimelineComponent::mouseWheelMove (const juce::MouseEvent& e, const juce::M
 
 void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 {
+    if (groups == nullptr) return;
     if (e.mods.isPopupMenu())   // right-click / ctrl-click
     {
         if (e.x >= headerW) { if (onLoopMenu) onLoopMenu (timeForX ((double) e.x)); return; }
@@ -874,6 +876,7 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 
 void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
 {
+    if (groups == nullptr) return;
     if (dragMode == Drag::HeaderVol)
     {
         const float vn = juce::jlimit (0.0f, 1.0f, (float) (e.x - dragVBox.getX()) / (float) juce::jmax (1, dragVBox.getWidth()));
