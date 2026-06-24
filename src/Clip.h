@@ -13,6 +13,7 @@ struct AudioClip
     double fadeOut       = 0.0;   // fade-out length (seconds) to the clip end
     int    fadeInShape   = 0;     // 0 linear, 1 exponential, 2 s-curve (bell), 3 logarithmic
     int    fadeOutShape  = 0;
+    float  gainDb        = 0.0f;  // per-clip gain in dB (0 = unity), pre-fader
 
     double timelineEnd() const { return timelineStart + duration; }
 };

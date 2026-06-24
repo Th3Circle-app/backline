@@ -72,7 +72,8 @@ public:
 
 private:
     void refitZoom();   // set the fixed zoom so current content fits the visible width
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut };
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain };
+    static constexpr float kClipGainRange = 18.0f;   // +/- dB mapped across the clip height
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
     int    numGroups() const;
@@ -107,6 +108,7 @@ private:
     AudioClip dragStartClip;
     int       dragStartX = 0;
     float     dragStartPan = 0.0f;
+    juce::Rectangle<float> dragClipRect;   // the dragged clip's rect (for vertical clip-gain mapping)
     juce::Rectangle<int> dragVBox;     // header-volume slider track being dragged
     double    dragPps = 0.0, frozenLen = 0.0;
     bool      draggedClip = false;

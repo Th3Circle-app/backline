@@ -102,6 +102,7 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 const juce::int64 halfMax = juce::jmax ((juce::int64) 1, effLen / 2);
                 const juce::int64 fIn  = juce::jlimit ((juce::int64) 1, halfMax, juce::jmax (declick, (juce::int64) (c.fadeIn  * rt)));
                 const juce::int64 fOut = juce::jlimit ((juce::int64) 1, halfMax, juce::jmax (declick, (juce::int64) (c.fadeOut * rt)));
+                const float clipGain = juce::Decibels::decibelsToGain (c.gainDb);   // per-clip gain (pre-fader)
 
                 for (int ch = 0; ch < numCh; ++ch)
                 {
@@ -115,7 +116,7 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                         if (cl < fIn)                fdf = fadeShape ((float) cl / (float) fIn, c.fadeInShape);
                         else if (cl > effLen - fOut) fdf = fadeShape ((float) (effLen - cl) / (float) fOut, c.fadeOutShape);
                         fdf = juce::jlimit (0.0f, 1.0f, fdf);
-                        dp[i] += sp[i] * fdf;
+                        dp[i] += sp[i] * fdf * clipGain;
                     }
                 }
             }

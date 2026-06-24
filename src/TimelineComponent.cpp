@@ -20,6 +20,12 @@ namespace
         x = juce::jlimit (0.0f, 1.0f, x);
         switch (s) { case 1: return x * x; case 2: return x * x * (3.0f - 2.0f * x); case 3: return std::sqrt (x); default: return x; }
     }
+
+    float gainLineY (juce::Rectangle<float> r, float gainDb)   // y of the clip-gain line (centre = 0 dB, +/-18 dB across height)
+    {
+        const float half = r.getHeight() * 0.5f - 4.0f;
+        return r.getCentreY() - juce::jlimit (-1.0f, 1.0f, gainDb / 18.0f) * half;
+    }
 }
 
 //==============================================================================
@@ -532,6 +538,20 @@ void TimelineComponent::paint (juce::Graphics& g)
                     t->thumb->drawChannels (g, waveArea.toNearestInt(), c.sourceIn, c.sourceIn + c.duration, 0.95f);
                 }
 
+                if (r.getWidth() > 24.0f && r.getHeight() > 26.0f)   // clip-gain line (drag to set per-clip gain)
+                {
+                    const float gy = gainLineY (r, c.gainDb);
+                    const bool nonZero = std::abs (c.gainDb) > 0.05f;
+                    g.setColour (juce::Colours::white.withAlpha (nonZero ? 0.85f : 0.45f));
+                    g.drawLine (r.getX() + 3.0f, gy, r.getRight() - 3.0f, gy, nonZero ? 1.6f : 1.0f);
+                    if (nonZero && r.getWidth() > 50.0f)
+                    {
+                        g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
+                        g.drawText ((c.gainDb > 0 ? "+" : "") + juce::String (c.gainDb, 1),
+                                    juce::Rectangle<int> ((int) r.getRight() - 40, (int) gy - 11, 37, 10), juce::Justification::centredRight, false);
+                    }
+                }
+
                 {                                              // fade ramps (curved per shape) + grab handles
                     const float pps = (float) pixelsPerSecond();
                     const float hh  = r.getHeight();
@@ -874,14 +894,20 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
                 dragMode = ((float) e.x < r.getCentreX()) ? Drag::TrimLeft : Drag::TrimRight;
             else if (editTool == EditTool::Grab)                  // Grabber: always move
                 dragMode = Drag::Move;
-            else                                                 // Smart: zone-based (fade corners / trim edges / move)
+            else                                                 // Smart: zone-based (fade corners / gain line / trim edges / move)
+            {
+                const float gy = gainLineY (r, cc.gainDb);
+                const bool onGain = (! top && ! left && ! right && std::abs ((float) e.y - gy) <= 5.0f);
                 dragMode = fadeInZone  ? Drag::FadeIn
                          : fadeOutZone ? Drag::FadeOut
-                         : left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;
+                         : left ? Drag::TrimLeft : right ? Drag::TrimRight
+                         : onGain ? Drag::ClipGain : Drag::Move;
+            }
             dragGroup     = hit->group;
             dragTrack     = hit->track;
             dragClip      = hitClip;
             dragStartClip = t->clips[(size_t) hitClip];
+            dragClipRect  = r;
             dragStartX    = e.x;
             draggedClip   = false;
             frozenLen     = rawTimelineLength();
@@ -912,6 +938,18 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
     {
         const float p = juce::jlimit (-1.0f, 1.0f, dragStartPan + (float) (e.x - dragStartX) * 0.012f);   // horizontal drag = pan
         if (onTrackPan) onTrackPan (dragGroup, dragTrack, p);
+        repaint();
+        return;
+    }
+
+    if (dragMode == Drag::ClipGain)
+    {
+        if (! draggedClip) { draggedClip = true; if (onEditBegin) onEditBegin(); }
+        const float half = juce::jmax (1.0f, dragClipRect.getHeight() * 0.5f - 4.0f);
+        const float norm = juce::jlimit (-1.0f, 1.0f, (dragClipRect.getCentreY() - (float) e.y) / half);
+        AudioClip nc = dragStartClip;
+        nc.gainDb = juce::jlimit (-18.0f, 18.0f, norm * 18.0f);
+        if (onClipChanged) onClipChanged (dragGroup, dragTrack, dragClip, nc);
         repaint();
         return;
     }

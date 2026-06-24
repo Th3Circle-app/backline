@@ -1038,6 +1038,8 @@ private:
         m.addSubMenu ("Fade In", fin);
         m.addSubMenu ("Fade Out", fout);
         m.addItem (5, "Remove Fades");
+        m.addSeparator();
+        m.addItem (6, "Reset Clip Gain (0 dB)");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
             {
@@ -1046,6 +1048,13 @@ private:
                 else if (r >= 10 && r <= 13) applyFade (0, r - 10);
                 else if (r >= 20 && r <= 23) applyFade (1, r - 20);
                 else if (r == 5) applyFade (2);
+                else if (r == 6 && validClip (g, t, c))
+                {
+                    pushUndo();
+                    AudioClip nc = groups[(size_t) g]->tracks[(size_t) t]->clips[(size_t) c];
+                    nc.gainDb = 0.0f;
+                    clipChanged (g, t, c, nc);
+                }
                 restoreKeyFocus();
             });
     }
@@ -2196,6 +2205,7 @@ private:
                             co->setProperty ("fadeOut", c.fadeOut);
                             co->setProperty ("fadeInShape", c.fadeInShape);
                             co->setProperty ("fadeOutShape", c.fadeOutShape);
+                            co->setProperty ("gainDb", c.gainDb);
                             carr.append (juce::var (co));
                         }
                         to->setProperty ("clips", carr);
@@ -2302,7 +2312,8 @@ private:
                             for (auto& cv : *carr)
                                 tr->clips.push_back ({ (double) cv["start"], (double) cv["in"], (double) cv["dur"],
                                                        (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0),
-                                                       (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0) });
+                                                       (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0),
+                                                       (float) cv.getProperty ("gainDb", 0.0) });
                         if (tr->clips.empty() && tr->sourceLength > 0.0)
                             tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 
