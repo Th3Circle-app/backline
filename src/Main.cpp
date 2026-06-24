@@ -1914,11 +1914,14 @@ private:
                 const auto it = pluginMenuMap.find (r);
                 if (it != pluginMenuMap.end())
                 {
-                    juce::String err;
-                    if (audioEngine.addHostedPlugin (engineId, it->second, err))
-                        openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1);   // pop the editor right away
-                    else
-                        titleLabel.setText ("Plugin failed to load: " + err, juce::dontSendNotification);
+                    titleLabel.setText ("Loading plugin...", juce::dontSendNotification);
+                    auto a = alive;
+                    audioEngine.addHostedPluginAsync (engineId, it->second, [this, a, engineId] (bool ok, juce::String err)
+                    {
+                        if (! a->load()) return;                                 // instantiated off-thread: a slow plugin can't freeze the UI
+                        if (ok) { openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); refreshMixer(); }
+                        else    { titleLabel.setText ("Plugin failed to load: " + err, juce::dontSendNotification); }
+                    });
                 }
             }
             else if (r >= 4000)

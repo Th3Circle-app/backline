@@ -50,6 +50,10 @@ public:
     void addNativeEffect (int trackId, int which);
     /** Instantiate a scanned AU/VST3 plugin and insert it. Returns false + sets error on failure. */
     bool addHostedPlugin (int trackId, const juce::PluginDescription& desc, juce::String& error);
+    /** Same, but instantiates on a background thread (a slow/hanging plugin won't freeze the UI).
+        The callback fires on the message thread. */
+    void addHostedPluginAsync (int trackId, const juce::PluginDescription& desc,
+                               std::function<void (bool, juce::String)> done);
 
     int  trackPluginCount (int trackId);
     juce::AudioProcessor* trackPlugin (int trackId, int index);   // raw ptr, valid until removed (message thread only)

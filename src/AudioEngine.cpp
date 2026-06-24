@@ -482,6 +482,17 @@ bool AudioEngine::addHostedPlugin (int trackId, const juce::PluginDescription& d
     return true;
 }
 
+void AudioEngine::addHostedPluginAsync (int trackId, const juce::PluginDescription& desc,
+                                        std::function<void (bool, juce::String)> done)
+{
+    pluginFormats.createPluginInstanceAsync (desc, mixer.rate, mixer.preparedBlock,
+        [this, trackId, done] (std::unique_ptr<juce::AudioPluginInstance> inst, const juce::String& err)
+        {
+            if (inst != nullptr) { addProcessorToTrack (trackId, std::move (inst)); if (done) done (true, {}); }
+            else                 { if (done) done (false, err); }
+        });
+}
+
 int AudioEngine::trackPluginCount (int trackId)
 {
     const juce::ScopedLock sl (mixer.lock);
