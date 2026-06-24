@@ -46,20 +46,22 @@ public:
         g.setColour (juce::Colour (0xff000000));
         g.fillRect (0, getHeight() - 1, getWidth(), 1);
 
-        auto chipBg = [&] (juce::Rectangle<int> b)
+        auto chipBg = [&] (juce::Rectangle<int> b, bool dim)
         {
             auto rf = b.toFloat();
-            g.setGradientFill (juce::ColourGradient (btnBg.brighter (0.06f), rf.getX(), rf.getY(), btnBg.darker (0.10f), rf.getX(), rf.getBottom(), false));
+            const juce::Colour base = dim ? barBg.darker (0.06f) : btnBg;
+            g.setGradientFill (juce::ColourGradient (base.brighter (0.06f), rf.getX(), rf.getY(), base.darker (0.10f), rf.getX(), rf.getBottom(), false));
             g.fillRoundedRectangle (rf, 4.0f);
-            g.setColour (juce::Colours::black.withAlpha (0.28f));
+            g.setColour (juce::Colours::black.withAlpha (dim ? 0.14f : 0.28f));
             g.drawRoundedRectangle (rf, 4.0f, 1.0f);
         };
 
-        for (int i = 0; i < 6; ++i)                      // left cluster: distinct glyphs
+        for (int i = 0; i < 6; ++i)                      // left cluster: Library + Mixer are wired; rest decorative (dimmed)
         {
-            auto b = leftBtns[i]; chipBg (b);
+            const bool live = (i == 0 || i == 4);
+            auto b = leftBtns[i]; chipBg (b, ! live);
             auto c = b.reduced (6).toFloat();
-            g.setColour (glyph);
+            g.setColour (live ? glyph : glyph.withAlpha (0.30f));
             switch (i)
             {
                 case 0: for (int k = 0; k < 3; ++k) g.fillRect (c.getX(), c.getY() + (float) k * (c.getHeight() / 2.6f), c.getWidth(), 2.0f); break;          // library
@@ -72,11 +74,11 @@ public:
             if (i == 0) { g.setColour (rec); g.fillEllipse ((float) b.getRight() - 6.0f, (float) b.getY() + 2.0f, 4.0f, 4.0f); }   // Library red badge
         }
 
-        for (int i = 0; i < 4; ++i)                      // right cluster: view toggles
+        for (int i = 0; i < 4; ++i)                      // right cluster: decorative (dimmed)
         {
-            auto b = rightBtns[i]; chipBg (b);
+            auto b = rightBtns[i]; chipBg (b, true);
             auto c = b.reduced (6).toFloat();
-            g.setColour (glyph);
+            g.setColour (glyph.withAlpha (0.30f));
             if      (i == 0) for (int k = 0; k < 3; ++k) g.fillRect (c.getX(), c.getY() + (float) k * (c.getHeight() / 2.6f), c.getWidth(), 2.0f);
             else if (i == 1) g.drawRect (c, 1.6f);
             else if (i == 2) g.drawEllipse (c.reduced (1.0f), 1.6f);

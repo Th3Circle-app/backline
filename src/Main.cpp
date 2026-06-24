@@ -161,6 +161,7 @@ public:
         ptBar.onPlay   = [this] { togglePlay(); };
         ptBar.onRecord = [this] { toggleSelectedRecordArm(); };
         ptBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
+        ptBar.onMode   = [this] (int mode) { const bool grid = (mode == 3); snapToggle.setToggleState (grid, juce::dontSendNotification); timeline.setSnapEnabled (grid); };   // Grid = snap on
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
         addChildComponent (ptBar);
@@ -242,6 +243,8 @@ public:
         mixerView.onSelect = [this] (int g, int t) { selGroup = g; selTrack = t; selClip = -1; timeline.setSelection (g, t, -1); };
         mixerView.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
         mixerView.onMasterMute   = [this] (bool b)  { audioEngine.setMasterMute (b); refreshInspector(); };
+        mixerView.onRecordArm    = [this] (int g, int t, bool b) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->recordArm = b; timeline.repaint(); } };
+        mixerView.onBounce       = [this] { exportAudio(); };
         addChildComponent (mixerView);   // shown when toggled
 
         keysButton.onClick = [this] { showKeysMenu(); };
@@ -463,10 +466,11 @@ public:
             g.fillRect (logicToolbar);
             g.setColour (s.windowBg.darker (0.4f));
             g.fillRect (logicToolbar.getX(), logicToolbar.getBottom() - 1, logicToolbar.getWidth(), 1);
-            g.setColour (s.muted);
+            g.setColour (s.text);
             g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f)));
-            g.drawText ("Edit        Functions        View", logicToolbar.getX() + 210, logicToolbar.getY(),
-                        360, logicToolbar.getHeight(), juce::Justification::centredLeft, false);
+            g.drawText ("Edit",      logicMEdit, juce::Justification::centred, false);
+            g.drawText ("Functions", logicMFunc, juce::Justification::centred, false);
+            g.drawText ("View",      logicMView, juce::Justification::centred, false);
         }
 
         // Layback signature (default layout only): LAYBACK• wordmark + the "lay-back line" accent hairline
@@ -543,6 +547,8 @@ public:
         auto status = area.removeFromTop (18);
         titleLabel.setBounds (status.reduced (10, 0));
         logicToolbar = area.removeFromTop (26);                 // local Edit / Functions / View row
+        { const int y = logicToolbar.getY(), h = logicToolbar.getHeight(); const int x = logicToolbar.getX() + 210;
+          logicMEdit = { x, y, 46, h }; logicMFunc = { x + 56, y, 78, h }; logicMView = { x + 144, y, 46, h }; }
         area.removeFromTop (2);
 
         if (mixerVisible) { mixerView.setBounds (area.removeFromBottom (210)); area.removeFromBottom (4); }
@@ -1541,6 +1547,69 @@ private:
         if (mixerVisible) mixerView.syncFromModel();
     }
 
+    //== Logic local-menu row (Edit / Functions / View) — real pop-up menus ==
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (laf.skin.layout == 1 && ! logicToolbar.isEmpty())
+        {
+            if (logicMEdit.contains (e.getPosition())) { showLocalEditMenu();      return; }
+            if (logicMFunc.contains (e.getPosition())) { showLocalFunctionsMenu(); return; }
+            if (logicMView.contains (e.getPosition())) { showLocalViewMenu();      return; }
+        }
+    }
+
+    void showLocalEditMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Undo"); m.addItem (2, "Redo"); m.addSeparator();
+        m.addItem (3, "Split at Playhead"); m.addItem (4, "Delete Clip");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (logicMEdit)), [this] (int r)
+        {
+            if      (r == 1) commandManager.invokeDirectly (LSCmd::Undo, false);
+            else if (r == 2) commandManager.invokeDirectly (LSCmd::Redo, false);
+            else if (r == 3) commandManager.invokeDirectly (LSCmd::Split, false);
+            else if (r == 4) commandManager.invokeDirectly (LSCmd::DeleteClip, false);
+            restoreKeyFocus();
+        });
+    }
+
+    void showLocalFunctionsMenu()
+    {
+        const bool ht = validTrack (selGroup, selTrack);
+        juce::PopupMenu m;
+        m.addItem (1, "Insert EQ on Selected Track", ht);
+        m.addItem (2, "Insert Compressor on Selected Track", ht);
+        m.addSeparator();
+        m.addItem (3, "Plugins Window...");
+        m.addItem (4, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (logicMFunc)), [this] (int r)
+        {
+            if      (r == 1) insertEffectAndEdit (0);
+            else if (r == 2) insertEffectAndEdit (1);
+            else if (r == 3) openPluginListWindow();
+            else if (r == 4) startPluginScan();
+            restoreKeyFocus();
+        });
+    }
+
+    void showLocalViewMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, mixerVisible ? "Hide Mixer" : "Show Mixer");
+        m.addItem (2, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
+        m.addSeparator();
+        m.addItem (3, "Snap", true, snapToggle.getToggleState());
+        m.addItem (4, "Loop / Cycle", true, loopEnabled);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (logicMView)), [this] (int r)
+        {
+            if      (r == 1) toggleMixer();
+            else if (r == 2) showVideoWindow (! videoWindowOpen);
+            else if (r == 3) { snapToggle.setToggleState (! snapToggle.getToggleState(), juce::dontSendNotification); timeline.setSnapEnabled (snapToggle.getToggleState()); }
+            else if (r == 4) toggleLoop();
+            restoreKeyFocus();
+        });
+    }
+
     //== plugin scanning + persistence ==
     juce::File pluginListFile() const
     {
@@ -2088,6 +2157,7 @@ private:
     juce::Label timeLabel, titleLabel;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> transportBand, viewerFrame, laybackWordmark, logicToolbar;
+    juce::Rectangle<int> logicMEdit, logicMFunc, logicMView;   // Logic local-menu hit areas
 
     std::unique_ptr<VideoWindow> videoWindow;   // destroyed in ~MainComponent before `video`
     bool videoWindowOpen = false;

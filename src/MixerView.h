@@ -28,6 +28,9 @@ struct ChannelStrip : public juce::Component
     std::function<void (float)> onFader, onPanChange;
     std::function<void (bool)>  onMuteToggle, onSoloToggle;
     std::function<void()>       onFxClick, onSelectClick;
+    std::function<void (bool)>  onRecordArmToggle;   // track R cell
+    std::function<void()>       onBounceClick;       // master Bnc cell
+    bool recArmed = false;
 
     explicit ChannelStrip (bool master) : isMaster (master)
     {
@@ -75,6 +78,12 @@ struct ChannelStrip : public juce::Component
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (! isMaster && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }
+        if (isMaster && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
+        if (! isMaster && ! riRow.isEmpty())
+        {
+            auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1);   // R cell = left half
+            if (rR.contains (e.getPosition())) { recArmed = ! recArmed; if (onRecordArmToggle) onRecordArmToggle (recArmed); repaint(); return; }
+        }
         if (onSelectClick) onSelectClick();
     }
 
@@ -133,9 +142,16 @@ struct ChannelStrip : public juce::Component
             }
         }
 
-        auto rowSlot = [&] (juce::Rectangle<int> b, const juce::String& t, juce::Colour txt, bool link, bool knob)
+        auto rowSlot = [&] (juce::Rectangle<int> b, const juce::String& t, juce::Colour txt, bool link, bool knob, bool disabled)
         {
             if (b.isEmpty()) return;
+            if (disabled)   // read-only routing label (no control behaviour yet) -> draw flat so it doesn't read as a button
+            {
+                g.setColour (skin.muted.withAlpha (0.5f));
+                g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+                g.drawText (t, b.toFloat().withTrimmedLeft (6.0f), juce::Justification::centredLeft, true);
+                return;
+            }
             auto rf = b.toFloat().reduced (2.0f, 1.0f);
             g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (rf, 3.0f);
             g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (rf, 3.0f, 1.0f);
@@ -145,22 +161,20 @@ struct ChannelStrip : public juce::Component
             g.setColour (txt); g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
             g.drawText (t, b.toFloat().withTrimmedLeft (lpad), juce::Justification::centredLeft, true);
         };
-        rowSlot (inRow,     "In 1-2",     skin.text,  true,  false);
-        rowSlot (sendsRow,  "Sends",      skin.muted, false, true);
-        rowSlot (outputRow, "Stereo Out", skin.text,  false, false);
-        rowSlot (groupRow,  "Group",      skin.text,  false, false);
-        rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false);
+        rowSlot (inRow,     "In 1-2",     skin.text,  true,  false, true);   // routing rows are read-only labels for now
+        rowSlot (sendsRow,  "Sends",      skin.muted, false, true,  true);
+        rowSlot (outputRow, "Stereo Out", skin.text,  false, false, true);
+        rowSlot (groupRow,  "Group",      skin.text,  false, false, true);
+        rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false, true);
 
-        if (! valueBox.isEmpty())                                    // two dB value boxes (input | output)
+        if (! valueBox.isEmpty())                                    // live fader dB readout
         {
-            auto vbx = valueBox;
-            auto right = vbx.removeFromRight (vbx.getWidth() / 2 - 1); vbx.removeFromRight (2);
             const double v  = fader.getValue();
             const float  db = 20.0f * (float) std::log10 (juce::jmax (1.0e-4, v));
-            g.setColour (juce::Colour (0xff2a2a2a)); g.fillRoundedRectangle (vbx.toFloat(), 2.0f); g.fillRoundedRectangle (right.toFloat(), 2.0f);
+            g.setColour (juce::Colour (0xff2a2a2a)); g.fillRoundedRectangle (valueBox.toFloat(), 2.0f);
             g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.0f, juce::Font::plain)));
-            g.setColour (skin.text); g.drawText ("0.0", vbx, juce::Justification::centred, false);
-            g.setColour (db > 0.05f ? juce::Colours::red : juce::Colour (0xff7fcf7f)); g.drawText (juce::String (db, 1), right, juce::Justification::centred, false);
+            g.setColour (db > 0.05f ? juce::Colours::red : juce::Colour (0xff7fcf7f));
+            g.drawText (juce::String (db, 1) + " dB", valueBox, juce::Justification::centred, false);
         }
 
         if (! tickArea.isEmpty())                                    // dB scale beside the fader
@@ -200,11 +214,11 @@ struct ChannelStrip : public juce::Component
             else
             {
                 auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1); rl.removeFromLeft (2);
-                auto cell = [&] (juce::Rectangle<int> b, const char* tx, juce::Colour col)
-                { g.setColour (skin.control.darker (0.1f)); g.fillRoundedRectangle (b.toFloat().reduced (1.0f), 2.5f);
-                  g.setColour (col); g.setFont (9.5f); g.drawText (tx, b, juce::Justification::centred, false); };
-                cell (rR, "R", juce::Colour (0xffc8281a));
-                cell (rl, "I", skin.muted);
+                auto cell = [&] (juce::Rectangle<int> b, const char* tx, juce::Colour col, bool on)
+                { g.setColour (on ? col : skin.control.darker (0.1f)); g.fillRoundedRectangle (b.toFloat().reduced (1.0f), 2.5f);
+                  g.setColour (on ? juce::Colours::white : col); g.setFont (9.5f); g.drawText (tx, b, juce::Justification::centred, false); };
+                cell (rR, "R", juce::Colour (0xffc8281a), recArmed);   // record-arm (lit when armed)
+                cell (rl, "I", skin.muted.withAlpha (0.5f), false);    // input routing: read-only for now
             }
         }
     }
@@ -221,6 +235,8 @@ public:
     std::function<void (int, int, bool)>  onSolo;
     std::function<void (int, int)>        onFxMenu;
     std::function<void (int, int)>        onSelect;
+    std::function<void (int, int, bool)>  onRecordArm;   // (group, track, armed)
+    std::function<void ()>                onBounce;       // master Bnc -> export/bounce
     std::function<void (float)>           onMasterVolume;
     std::function<void (bool)>            onMasterMute;
 
@@ -324,6 +340,7 @@ private:
             s->pan.setValue (tr->pan, juce::dontSendNotification);
             s->mute.setToggleState (tr->mute, juce::dontSendNotification);
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
+            s->recArmed = tr->recordArm;
         }
         else
         {
@@ -339,6 +356,8 @@ private:
         s->onSoloToggle = [this, g2, t2] (bool b)   { if (onSolo) onSolo (g2, t2, b); };
         s->onFxClick    = [this, g2, t2] { if (onFxMenu) onFxMenu (g2, t2); };
         s->onSelectClick= [this, g2, t2] { if (onSelect) onSelect (g2, t2); };
+        s->onRecordArmToggle = [this, g2, t2] (bool b) { if (onRecordArm) onRecordArm (g2, t2, b); };
+        s->onBounceClick     = [this] { if (onBounce) onBounce(); };
 
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));

@@ -10,7 +10,9 @@ class ProToolsControlBar : public juce::Component
 {
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
+    std::function<void (int)> onTool, onMode;   // edit-tool selected; edit-mode selected (3 = Grid)
     std::function<bool()> isPlaying, isLoop;
+    int selTool = -1, selMode = 3;              // remembered selections; Grid is the default edit mode
 
     ProToolsControlBar() { setInterceptsMouseClicks (true, false); }
 
@@ -40,7 +42,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const juce::Colour barTop (0xff2c2c2c), barBot (0xff1d1d1d), chip (0xff343434), glyph (0xffc8c8c8);
-        const juce::Colour rec (0xffe23a2a), loopLit (0xff27c79a);
+        const juce::Colour rec (0xffe23a2a), loopLit (0xff27c79a), sel (0xff2f7d63);   // selected tool/mode highlight
         const juce::Colour lcdBg (0xff04140a), lcdGrn (0xff36ff86), lcdLbl (0xff2f8f5a);
 
         g.setGradientFill (juce::ColourGradient (barTop, 0.0f, 0.0f, barBot, 0.0f, (float) getHeight(), false));
@@ -59,9 +61,9 @@ public:
 
         for (int i = 0; i < 5; ++i)                              // edit tools: zoom/trim/grab/scrub/pencil
         {
-            bevel (tool[i], chip);
+            bevel (tool[i], i == selTool ? sel : chip);
             auto c = tool[i].reduced (7).toFloat();
-            g.setColour (glyph);
+            g.setColour (i == selTool ? juce::Colours::white : glyph);
             switch (i)
             {
                 case 0: g.drawEllipse (c.removeFromTop (c.getWidth()).reduced (1.0f), 1.4f); g.drawLine (c.getCentreX(), c.getCentreY(), c.getRight(), c.getBottom(), 1.4f); break; // zoom
@@ -106,11 +108,11 @@ public:
         led (mainLcd, "TIMECODE",   mainCtr, 24.0f);
         led (subLcd,  "BARS|BEATS", subCtr, 14.0f);
 
-        for (int i = 0; i < 4; ++i)                              // edit-mode cluster (right)
+        for (int i = 0; i < 4; ++i)                              // edit-mode cluster (right): shuffle/slip/spot/grid
         {
-            bevel (mode[i], chip);
+            bevel (mode[i], i == selMode ? sel : chip);
             auto c = mode[i].reduced (7).toFloat();
-            g.setColour (glyph);
+            g.setColour (i == selMode ? juce::Colours::white : glyph);
             if      (i == 0) g.drawRect (c, 1.4f);
             else if (i == 1) g.drawLine (c.getX(), c.getCentreY(), c.getRight(), c.getCentreY(), 1.4f);
             else if (i == 2) g.drawEllipse (c.reduced (1.0f), 1.4f);
@@ -130,6 +132,10 @@ public:
                 else if (i == 4) { if (onLoop)   onLoop(); }
                 repaint(); return;
             }
+        for (int i = 0; i < 5; ++i)                              // edit-tool palette (remembers selection)
+            if (tool[i].contains (e.getPosition())) { selTool = i; if (onTool) onTool (i); repaint(); return; }
+        for (int i = 0; i < 4; ++i)                              // edit-mode (Grid = snap on, others = off)
+            if (mode[i].contains (e.getPosition())) { selMode = i; if (onMode) onMode (i); repaint(); return; }
     }
 
 private:

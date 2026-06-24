@@ -426,13 +426,13 @@ void TimelineComponent::paint (juce::Graphics& g)
 
                     lab (cell (0, t->mute, juce::Colour (0xff4fb0e6)), "M", t->mute, juce::Colour (0xff4fb0e6));        // mute cyan
                     lab (cell (1, t->solo, juce::Colour (0xffe6c84a)), "S", t->solo, juce::Colour (0xffe6c84a));        // solo gold
-                    { auto fb = cell (2, false, {});                                                                    // freeze snowflake
-                      g.setColour (juce::Colour (0xff9aa0a8));
+                    { auto fb = cell (2, false, {});                                                                    // freeze (not wired yet -> dimmed)
+                      g.setColour (juce::Colour (0xff9aa0a8).withAlpha (0.40f));
                       const float fx = (float) fb.getCentreX(), fy = (float) fb.getCentreY();
                       for (int a = 0; a < 3; ++a) { const float ang = (float) a * 1.0472f;
                         g.drawLine (fx - std::cos (ang) * 4.5f, fy - std::sin (ang) * 4.5f, fx + std::cos (ang) * 4.5f, fy + std::sin (ang) * 4.5f, 1.0f); } }
                     lab (cell (3, t->recordArm, juce::Colour (0xffc8281a)), "R", t->recordArm, juce::Colour (0xffc8281a));  // record red
-                    lab (cell (4, false, {}), "I", false, juce::Colour (0xff9aa0a8));                                   // input
+                    lab (cell (4, false, {}), "I", false, juce::Colour (0xff9aa0a8).withAlpha (0.40f));                 // input (not wired yet -> dimmed)
                 }
 
                 auto vb = vBox (row.y);                                              // recessed slider + value fill + cap
