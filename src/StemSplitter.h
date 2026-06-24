@@ -16,12 +16,22 @@
     build can replace separate() without touching the UI or import flow. */
 namespace StemSplitter
 {
-    /** The python interpreter inside our managed Demucs venv. */
-    inline juce::File venvPython()
+    /** Root of our managed Demucs venv (per-OS app-data dir: ~/Library/Application
+        Support/Layback on macOS, %APPDATA%/Layback on Windows, ~/.config on Linux). */
+    inline juce::File venvDir()
     {
         return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Layback").getChildFile ("demucs-venv")
-                   .getChildFile ("bin").getChildFile ("python");
+                   .getChildFile ("Layback").getChildFile ("demucs-venv");
+    }
+
+    /** The python interpreter inside our managed Demucs venv (cross-platform layout). */
+    inline juce::File venvPython()
+    {
+       #if JUCE_WINDOWS
+        return venvDir().getChildFile ("Scripts").getChildFile ("python.exe");
+       #else
+        return venvDir().getChildFile ("bin").getChildFile ("python");
+       #endif
     }
 
     /** True once the venv exists (the one-time Demucs install has completed). */
