@@ -441,6 +441,8 @@ bool AudioEngine::renderMixToFile (const juce::File& outWav, double lengthSecond
         buf.clear();
         juce::AudioSourceChannelInfo info (&buf, 0, n);
         mixer.getNextAudioBlock (info);
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)            // safety: never write past 0 dBFS on bounce
+            juce::FloatVectorOperations::clip (buf.getWritePointer (ch), buf.getReadPointer (ch), -1.0f, 1.0f, n);
         if (! writer->writeFromAudioSampleBuffer (buf, 0, n)) break;
         done += n;
     }
