@@ -11,6 +11,7 @@ add_subdirectory(external/JUCE)
 juce_add_gui_app(LaybackStation
     PRODUCT_NAME "Layback Station"
     COMPANY_NAME "Layback"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
     BUNDLE_ID "app.layback.station")
 
 target_sources(LaybackStation PRIVATE
