@@ -12,7 +12,7 @@ public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
     std::function<void (int)> onTool, onMode;   // edit-tool selected; edit-mode selected (3 = Grid)
     std::function<bool()> isPlaying, isLoop;
-    int selTool = -1, selMode = 3;              // remembered selections; Grid is the default edit mode
+    int selTool = 4, selMode = 1;               // Smart tool + Slip mode are the defaults
 
     ProToolsControlBar() { setInterceptsMouseClicks (true, false); }
 
@@ -59,7 +59,7 @@ public:
             g.setColour (juce::Colours::black.withAlpha (0.6f)); g.drawRoundedRectangle (rf, 4.0f, 1.0f);
         };
 
-        for (int i = 0; i < 5; ++i)                              // edit tools: zoom/trim/grab/scrub/pencil
+        for (int i = 0; i < 5; ++i)                              // edit tools: zoom/trim/grab/scrub/smart
         {
             bevel (tool[i], i == selTool ? sel : chip);
             auto c = tool[i].reduced (7).toFloat();
@@ -70,7 +70,7 @@ public:
                 case 1: g.drawLine (c.getX(), c.getY(), c.getRight(), c.getBottom(), 1.4f); g.drawLine (c.getX(), c.getBottom(), c.getRight(), c.getY(), 1.4f); break;             // trim
                 case 2: g.drawRoundedRectangle (c, 2.0f, 1.4f); break;                                                                                                            // grab
                 case 3: g.drawLine (c.getX(), c.getCentreY(), c.getRight(), c.getCentreY(), 1.4f); break;                                                                          // scrub
-                case 4: g.drawLine (c.getX(), c.getBottom(), c.getRight(), c.getY(), 1.6f); break;                                                                                 // pencil
+                case 4: { juce::Path a; a.addTriangle (c.getX(), c.getY(), c.getX() + c.getWidth() * 0.66f, c.getCentreY(), c.getX(), c.getBottom()); g.fillPath (a); } break;          // smart (pointer)
             }
         }
 

@@ -667,6 +667,26 @@ double TimelineComponent::applySnap (double ts) const
     return found ? bestTs : ts;
 }
 
+// Shuffle mode: snap the moved clip's start (or end) to a nearby other-clip boundary on the same track.
+double TimelineComponent::snapClipToEdges (double ts, double dur) const
+{
+    if (groups == nullptr || dragGroup < 0 || dragTrack < 0) return ts;
+    if (dragGroup >= numGroups() || dragTrack >= (int) (*groups)[(size_t) dragGroup]->tracks.size()) return ts;
+    const auto* t = (*groups)[(size_t) dragGroup]->tracks[(size_t) dragTrack].get();
+    const double pps = (dragPps > 0.0 ? dragPps : pixelsPerSecond());
+    double bestD = (pps > 0.0) ? 14.0 / pps : 0.12, best = ts;
+    for (int j = 0; j < (int) t->clips.size(); ++j)
+    {
+        if (j == dragClip) continue;
+        for (double edge : { t->clips[(size_t) j].timelineEnd(), t->clips[(size_t) j].timelineStart })
+        {
+            if (std::abs (ts - edge) < bestD)         { bestD = std::abs (ts - edge);         best = edge; }        // our start to their edge
+            if (std::abs ((ts + dur) - edge) < bestD) { bestD = std::abs ((ts + dur) - edge); best = edge - dur; }  // our end to their edge
+        }
+    }
+    return juce::jmax (0.0, best);
+}
+
 void TimelineComponent::seekFromMouse (const juce::MouseEvent& e)
 {
     const double t = timeForX ((double) e.x);
@@ -815,6 +835,10 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // ---- edit-tool overrides (Pro Tools tool palette): Zoom + Scrub act anywhere in the lane ----
+    if (editTool == EditTool::Zoom)  { zoomBy (e.mods.isAltDown() ? (1.0 / 1.6) : 1.6); return; }
+    if (editTool == EditTool::Scrub) { if (onScrubStart) onScrubStart(); seekFromMouse (e); return; }
+
     // ---- lane area ----
     if (hit == nullptr) { if (onScrubStart) onScrubStart(); seekFromMouse (e); return; }
 
@@ -852,9 +876,14 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
             const bool right = ((float) e.x >= r.getRight() - edgePx);
             const bool fadeInZone  = top && ! left  && (float) e.x <  r.getCentreX() && (float) e.x <= r.getX() + juce::jmax (20.0f, finW)  + 8.0f;
             const bool fadeOutZone = top && ! right && (float) e.x >= r.getCentreX() && (float) e.x >= r.getRight() - juce::jmax (20.0f, foutW) - 8.0f;
-            dragMode = fadeInZone  ? Drag::FadeIn
-                     : fadeOutZone ? Drag::FadeOut
-                     : left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;
+            if (editTool == EditTool::Trim)                       // Trimmer: always trim the nearer edge
+                dragMode = ((float) e.x < r.getCentreX()) ? Drag::TrimLeft : Drag::TrimRight;
+            else if (editTool == EditTool::Grab)                  // Grabber: always move
+                dragMode = Drag::Move;
+            else                                                 // Smart: zone-based (fade corners / trim edges / move)
+                dragMode = fadeInZone  ? Drag::FadeIn
+                         : fadeOutZone ? Drag::FadeOut
+                         : left ? Drag::TrimLeft : right ? Drag::TrimRight : Drag::Move;
             dragGroup     = hit->group;
             dragTrack     = hit->track;
             dragClip      = hitClip;
@@ -936,7 +965,8 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
         if (dragMode == Drag::Move)
         {
             double ts = dragStartClip.timelineStart + dt;
-            if (snapEnabled) ts = applySnap (ts);
+            if (shuffle)          ts = snapClipToEdges (ts, dragStartClip.duration);   // Shuffle: butt against neighbours
+            else if (snapEnabled) ts = applySnap (ts);
             nc.timelineStart = juce::jmax (0.0, ts);   // clamp AFTER snap (snap candidates can be negative)
         }
         else if (dragMode == Drag::TrimLeft)

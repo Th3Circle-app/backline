@@ -30,6 +30,9 @@ public:
     void setLoop (bool enabled, double start, double end);
     void setSnapEnabled (bool b);
     void setSkin (const Skin& s);
+    enum class EditTool { Smart, Trim, Grab, Scrub, Zoom };   // Pro Tools-style edit tools
+    void setEditTool (EditTool t) { editTool = t; }
+    void setShuffle (bool b) { shuffle = b; }                 // Shuffle edit mode: moves snap to adjacent clip edges
     int  contentHeight() const;   // total stacked height of all rows (for a scroll viewport)
     int  contentWidth() const;    // total pixel width at the current zoom (for a scroll viewport)
     void setViewportWidth (int w);// visible content width of the scroll viewport (for fit/zoom)
@@ -116,6 +119,9 @@ private:
 
     double zoomPps = 0.0;   // fixed zoom in pixels/second (0 = not yet fit to window)
     int    viewportW = 0;   // visible content width of the scroll viewport
+    EditTool editTool = EditTool::Smart;   // active edit tool (PT skin); Smart = zone-based default
+    bool     shuffle  = false;             // Shuffle edit mode (butt clips against neighbours)
+    double   snapClipToEdges (double ts, double dur) const;   // snap a moved clip to nearby clip boundaries
 
     int                  headerW     = 184;   // widened to 280 for Logic-style headers
     static constexpr int rulerHeight = 22;

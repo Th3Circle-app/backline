@@ -178,7 +178,13 @@ public:
         ptBar.onPlay   = [this] { togglePlay(); };
         ptBar.onRecord = [this] { toggleSelectedRecordArm(); };
         ptBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
-        ptBar.onMode   = [this] (int mode) { const bool grid = (mode == 3); snapToggle.setToggleState (grid, juce::dontSendNotification); timeline.setSnapEnabled (grid); };   // Grid = snap on
+        ptBar.onMode   = [this] (int mode) { applyPtEditMode (mode); };
+        ptBar.onTool   = [this] (int t)
+        {
+            using ET = TimelineComponent::EditTool;
+            const ET tools[] = { ET::Zoom, ET::Trim, ET::Grab, ET::Scrub, ET::Smart };   // zoom/trim/grab/scrub/smart
+            timeline.setEditTool (tools[juce::jlimit (0, 4, t)]);
+        };
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
         addChildComponent (ptBar);
@@ -1320,6 +1326,25 @@ private:
         }
         keysButton.setButtonText ("Keys: " + profileName (p));
         applySkinForProfile (p);   // switching the station also reskins the app to that DAW
+
+        if (p == KeyProfile::ProTools)   // sync the timeline to the PT tool/mode palette
+        {
+            using ET = TimelineComponent::EditTool;
+            const ET tools[] = { ET::Zoom, ET::Trim, ET::Grab, ET::Scrub, ET::Smart };
+            timeline.setEditTool (tools[juce::jlimit (0, 4, ptBar.selTool)]);
+            ptEditMode = ptBar.selMode;
+            const bool grid = (ptBar.selMode == 3);
+            snapToggle.setToggleState (grid, juce::dontSendNotification);
+            timeline.setSnapEnabled (grid);
+            timeline.setShuffle (ptBar.selMode == 0);
+        }
+        else                              // other skins: normal smart editing, snap per the toggle
+        {
+            timeline.setEditTool (TimelineComponent::EditTool::Smart);
+            timeline.setShuffle (false);
+            timeline.setSnapEnabled (snapToggle.getToggleState());
+        }
+
         menuItemsChanged();        // rebuild the menu bar to that DAW's menu set
         grabKeyboardFocus();
         saveSettings();            // remember this skin for next launch
@@ -1729,6 +1754,69 @@ private:
                                           : "Track record-disarmed", juce::dontSendNotification);
         timeline.repaint();
         if (mixerVisible) mixerView.syncFromModel();
+    }
+
+    //== Pro Tools edit modes: Shuffle(0) / Slip(1) / Spot(2) / Grid(3) ==
+    void applyPtEditMode (int mode)
+    {
+        ptEditMode = mode;
+        const bool grid = (mode == 3);
+        snapToggle.setToggleState (grid, juce::dontSendNotification);
+        timeline.setSnapEnabled (grid);          // Grid snaps; Slip/Shuffle/Spot don't grid-snap
+        timeline.setShuffle (mode == 0);         // Shuffle = butt clips against neighbours
+        if (mode == 2) spotSelectedClip();       // Spot = type an exact location for the selected clip
+    }
+
+    // Move the selected clip to a typed position (HH:MM:SS:FF, M:SS, or plain seconds).
+    void spotSelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip))
+        { titleLabel.setText ("Select a clip to spot to a location", juce::dontSendNotification); return; }
+        const double cur = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip].timelineStart;
+        auto* w = new juce::AlertWindow ("Spot to location",
+                       "Move the selected clip to (HH:MM:SS:FF, M:SS, or seconds):", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("pos", formatTimecode (cur));
+        w->addButton ("Spot",   1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (r == 1 && validClip (selGroup, selTrack, selClip))
+            {
+                const double secs = parsePosition (w->getTextEditorContents ("pos"));
+                if (secs >= 0.0)
+                {
+                    pushUndo();
+                    AudioClip nc = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+                    nc.timelineStart = secs;
+                    clipChanged (selGroup, selTrack, selClip, nc);
+                    titleLabel.setText ("Spotted to " + formatTimecode (secs), juce::dontSendNotification);
+                }
+            }
+            restoreKeyFocus();
+        }), false);
+    }
+
+    static juce::String formatTimecode (double secs)   // HH:MM:SS:FF @30fps
+    {
+        if (secs < 0.0) secs = 0.0;
+        const int h = (int) (secs / 3600.0), m = ((int) (secs / 60.0)) % 60, s = ((int) secs) % 60, f = ((int) (secs * 30.0)) % 30;
+        return juce::String::formatted ("%02d:%02d:%02d:%02d", h, m, s, f);
+    }
+    static double parsePosition (const juce::String& in)
+    {
+        const auto str = in.trim();
+        if (str.isEmpty()) return -1.0;
+        if (str.containsChar (':'))
+        {
+            juce::StringArray p; p.addTokens (str, ":", "");
+            double h = 0, m = 0, s = 0, f = 0; const int n = p.size();
+            if      (n == 2) { m = p[0].getDoubleValue(); s = p[1].getDoubleValue(); }
+            else if (n == 3) { m = p[0].getDoubleValue(); s = p[1].getDoubleValue(); f = p[2].getDoubleValue(); }
+            else if (n >= 4) { h = p[0].getDoubleValue(); m = p[1].getDoubleValue(); s = p[2].getDoubleValue(); f = p[3].getDoubleValue(); }
+            return h * 3600.0 + m * 60.0 + s + f / 30.0;
+        }
+        return str.getDoubleValue();
     }
 
     //== Logic local-menu row (Edit / Functions / View) — real pop-up menus ==
@@ -2377,6 +2465,7 @@ private:
     bool pluginsScanned = false;
     bool splitting = false;   // a stem split is in progress (offline render on a worker thread)
     bool installing = false;  // the one-time Demucs setup is running
+    int  ptEditMode = 1;      // Pro Tools edit mode: 0 Shuffle, 1 Slip, 2 Spot, 3 Grid
 
     MixerView mixerView;
     bool      mixerVisible = false;
