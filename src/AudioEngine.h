@@ -53,6 +53,11 @@ public:
 
     int  trackPluginCount (int trackId);
     juce::AudioProcessor* trackPlugin (int trackId, int index);   // raw ptr, valid until removed (message thread only)
+
+    /** Serialize a track's whole FX chain (native + hosted, with state) to a var array. */
+    juce::var saveTrackFx (int trackId);
+    /** Recreate a track's FX chain from saveTrackFx() output (skips plugins missing on this machine). */
+    void      restoreTrackFx (int trackId, const juce::var& fxArray);
     juce::String trackPluginName (int trackId, int index);
     void removeTrackPlugin (int trackId, int index);
 

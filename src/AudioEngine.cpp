@@ -507,6 +507,60 @@ juce::String AudioEngine::trackPluginName (int trackId, int index)
     return {};
 }
 
+juce::var AudioEngine::saveTrackFx (int trackId)
+{
+    juce::var arr;
+    const int n = trackPluginCount (trackId);
+    for (int i = 0; i < n; ++i)
+    {
+        auto* proc = trackPlugin (trackId, i);
+        if (proc == nullptr) continue;
+
+        int which = -1; juce::String descXml;
+        if      (dynamic_cast<NativeEQ*> (proc))         which = 0;
+        else if (dynamic_cast<NativeCompressor*> (proc)) which = 1;
+        else if (auto* inst = dynamic_cast<juce::AudioPluginInstance*> (proc))
+        { if (auto xml = inst->getPluginDescription().createXml()) descXml = xml->toString(); }
+        else continue;   // unknown processor type -> skip
+
+        auto* o = new juce::DynamicObject();
+        if (which >= 0) { o->setProperty ("kind", "native"); o->setProperty ("which", which); }
+        else            { o->setProperty ("kind", "plugin"); o->setProperty ("desc", descXml); }
+        juce::MemoryBlock mb; proc->getStateInformation (mb);
+        o->setProperty ("state", mb.toBase64Encoding());
+        arr.append (juce::var (o));
+    }
+    return arr;
+}
+
+void AudioEngine::restoreTrackFx (int trackId, const juce::var& arr)
+{
+    auto* a = arr.getArray();
+    if (a == nullptr) return;
+    for (auto& fv : *a)
+    {
+        const juce::String kind = fv.getProperty ("kind", "").toString();
+        if (kind == "native")
+        {
+            addNativeEffect (trackId, (int) fv.getProperty ("which", 0));
+        }
+        else if (kind == "plugin")
+        {
+            juce::PluginDescription desc;
+            if (auto xml = juce::parseXML (fv.getProperty ("desc", "").toString())) desc.loadFromXml (*xml);
+            juce::String err;
+            if (! addHostedPlugin (trackId, desc, err)) continue;   // plugin not installed here -> skip gracefully
+        }
+        else continue;
+
+        if (auto* proc = trackPlugin (trackId, trackPluginCount (trackId) - 1))   // restore state into the one just added
+        {
+            juce::MemoryBlock mb; mb.fromBase64Encoding (fv.getProperty ("state", "").toString());
+            if (mb.getSize() > 0) proc->setStateInformation (mb.getData(), (int) mb.getSize());
+        }
+    }
+}
+
 void AudioEngine::removeTrackPlugin (int trackId, int index)
 {
     std::unique_ptr<juce::AudioProcessor> doomed;   // freed outside the lock

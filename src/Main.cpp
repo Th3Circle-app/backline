@@ -2055,6 +2055,7 @@ private:
                         to->setProperty ("volume", t->volume);
                         to->setProperty ("pan", t->pan);
                         to->setProperty ("recordArm", t->recordArm);
+                        if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
                         to->setProperty ("beats", doublesToVar (t->beatMarkers));
 
                         juce::var carr;
@@ -2185,6 +2186,7 @@ private:
                         else
                         {
                             audioEngine.setTrackPan (id, tr->pan);   // restore pan (volume is applied via applyMixGains)
+                            audioEngine.restoreTrackFx (id, tv["fx"]);   // recreate EQ/Comp + hosted plugins with their state
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
                             tr->thumb->setSource (new juce::FileInputSource (file));

@@ -25,8 +25,16 @@ public:
     void changeProgramName (int, const juce::String&) override {}
     bool hasEditor() const override                            { return true; }
     juce::AudioProcessorEditor* createEditor() override        { return new juce::GenericAudioProcessorEditor (*this); }
-    void getStateInformation (juce::MemoryBlock&) override     {}
-    void setStateInformation (const void*, int) override       {}
+    void getStateInformation (juce::MemoryBlock& dest) override   // serialize normalized params, in add order
+    {
+        juce::MemoryOutputStream os (dest, false);
+        for (auto* p : getParameters()) os.writeFloat (p->getValue());
+    }
+    void setStateInformation (const void* data, int size) override
+    {
+        juce::MemoryInputStream is (data, (size_t) size, false);
+        for (auto* p : getParameters()) if (! is.isExhausted()) p->setValueNotifyingHost (is.readFloat());
+    }
     bool isBusesLayoutSupported (const BusesLayout& l) const override
     { return l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
           && l.getMainInputChannelSet()  == juce::AudioChannelSet::stereo(); }
