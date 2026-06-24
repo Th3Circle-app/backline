@@ -2,6 +2,8 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <mutex>
+#include <algorithm>
 #include <map>
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "VideoView.h"
@@ -117,6 +119,20 @@ public:
 };
 
 enum class KeyProfile { Layback, Logic, ProTools, Ableton };
+
+//==============================================================================
+/** Tracks the external child processes we spawn (Demucs, uv installer, ffmpeg) so
+    they can be killed on quit instead of lingering as zombie CPU hogs. Held by a
+    shared_ptr captured into worker threads, so it safely outlives the window. */
+struct ProcRegistry
+{
+    std::mutex mx;
+    std::vector<std::shared_ptr<juce::ChildProcess>> procs;
+
+    void add    (std::shared_ptr<juce::ChildProcess> p) { std::lock_guard<std::mutex> l (mx); procs.push_back (std::move (p)); }
+    void remove (const std::shared_ptr<juce::ChildProcess>& p) { std::lock_guard<std::mutex> l (mx); procs.erase (std::remove (procs.begin(), procs.end(), p), procs.end()); }
+    void killAll() { std::lock_guard<std::mutex> l (mx); for (auto& p : procs) if (p && p->isRunning()) p->kill(); procs.clear(); }
+};
 
 class MainComponent : public juce::Component,
                       private juce::Timer,
@@ -291,6 +307,7 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         setLookAndFeel (nullptr);
         if (alive) *alive = false;   // in-flight ffmpeg/scan worker callbacks bail instead of touching a dead window
+        procReg->killAll();          // kill any running Demucs/uv/ffmpeg child processes so they don't linger
         videoWindow.reset();         // release the video pop-out before the VideoView member is destroyed
         pluginListWindow.reset();    // close the plugin browser before the engine list it edits goes away
         closeAllPluginWindows();     // delete editors while their processors (in the engine) are still alive
@@ -454,16 +471,19 @@ public:
 
         const juce::File venvDir = StemSplitter::venvDir();
         const juce::File venvPy  = StemSplitter::venvPython();
-        auto a = alive;
-        std::thread ([this, a, uv, venvDir, venvPy, onDone]
+        auto a = alive; auto reg = procReg;
+        std::thread ([this, a, reg, uv, venvDir, venvPy, onDone]
         {
-            auto run = [] (const juce::File& exe, const juce::StringArray& args) -> int
+            auto run = [reg] (const juce::File& exe, const juce::StringArray& args) -> int
             {
+                auto p = std::make_shared<juce::ChildProcess>();   // killable on quit
                 juce::StringArray cmd; cmd.add (exe.getFullPathName()); cmd.addArray (args);
-                juce::ChildProcess p;
-                if (! p.start (cmd, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) return -1;
-                p.readAllProcessOutput();           // block until finished
-                return p.getExitCode();
+                reg->add (p);
+                int code = -1;
+                if (p->start (cmd, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+                { p->readAllProcessOutput(); code = p->getExitCode(); }
+                reg->remove (p);
+                return code;
             };
             venvDir.getParentDirectory().createDirectory();
             bool ok = run (uv, { "venv", "--python", "3.11", venvDir.getFullPathName() }) == 0;
@@ -478,6 +498,16 @@ public:
                 if (onDone) onDone (installed);
             });
         }).detach();
+    }
+
+    // Delete split-stem folders older than two weeks so the app-support cache doesn't grow forever.
+    void pruneOldStems (const juce::File& root)
+    {
+        if (! root.isDirectory()) return;
+        const auto now = juce::Time::getCurrentTime();
+        for (auto& d : root.findChildFiles (juce::File::findDirectories, false))
+            if ((now - d.getLastModificationTime()).inDays() > 14.0)
+                d.deleteRecursively();
     }
 
     // Add a stem as a new track, placed to match the source track's clips. Returns the new track index (-1 on failure).
@@ -525,19 +555,25 @@ public:
 
         const juce::String baseName = tr->name;
         const std::vector<AudioClip> clips = tr->clips;   // place each stem exactly where the source sits
-        const juce::File outDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                     .getChildFile ("LaybackStems")
-                                     .getChildFile (juce::String ((juce::int64) juce::Time::getMillisecondCounter()));
+        // Persistent (not OS-temp, which can be purged out from under a reopened project); saving a project
+        // copies these into the .lbproj bundle anyway. Prune stale folders so they don't pile up.
+        const juce::File stemsRoot = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                                        .getChildFile ("Layback").getChildFile ("stems");
+        pruneOldStems (stemsRoot);
+        const juce::File outDir = stemsRoot.getChildFile (juce::String ((juce::int64) juce::Time::getMillisecondCounter()));
 
         splitting = true;
         titleLabel.setText (juce::String ("Splitting into ") + (sixStem ? "6" : "4")
                             + " stems (offline render, give it a minute)...", juce::dontSendNotification);
 
-        auto a = alive;
-        std::thread ([this, a, src, outDir, sixStem, g, baseName, clips]
+        auto a = alive; auto reg = procReg;
+        auto proc = std::make_shared<juce::ChildProcess>();
+        reg->add (proc);                                       // killable on quit
+        std::thread ([this, a, reg, proc, src, outDir, sixStem, g, baseName, clips]
         {
             juce::String err; juce::Array<juce::File> stems;
-            const bool ok = StemSplitter::separate (src, outDir, sixStem, err, stems);
+            const bool ok = StemSplitter::separate (src, outDir, sixStem, *proc, err, stems);
+            reg->remove (proc);
             juce::MessageManager::callAsync ([this, a, ok, err, stems, g, baseName, clips]
             {
                 if (! a->load()) return;
@@ -2360,6 +2396,7 @@ private:
 
     std::vector<EditSnapshot> undoStack, redoStack;
     std::shared_ptr<std::atomic<bool>> alive { std::make_shared<std::atomic<bool>> (true) };
+    std::shared_ptr<ProcRegistry>      procReg { std::make_shared<ProcRegistry>() };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

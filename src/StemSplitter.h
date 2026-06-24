@@ -69,8 +69,8 @@ namespace StemSplitter
     /** Runs Demucs SYNCHRONOUSLY (call from a worker thread). On success, fills
         outStems with the produced WAV files and returns true; otherwise sets
         error. The first run for a model also downloads its weights (needs net). */
-    inline bool separate (const juce::File& input, const juce::File& outDir,
-                          bool sixStem, juce::String& error, juce::Array<juce::File>& outStems)
+    inline bool separate (const juce::File& input, const juce::File& outDir, bool sixStem,
+                          juce::ChildProcess& proc, juce::String& error, juce::Array<juce::File>& outStems)
     {
         outStems.clear();
         const auto py = venvPython();
@@ -87,11 +87,10 @@ namespace StemSplitter
         cmd.add ("--out"); cmd.add (outDir.getFullPathName());
         cmd.add (input.getFullPathName());
 
-        juce::ChildProcess proc;
         if (! proc.start (cmd, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
         { error = "Could not launch Demucs."; return false; }
 
-        const juce::String log = proc.readAllProcessOutput();   // blocks until Demucs finishes
+        const juce::String log = proc.readAllProcessOutput();   // blocks until Demucs finishes (or proc.kill())
 
         // Demucs writes <outDir>/<model>/<inputBaseName>/<stem>.wav
         const auto stemDir = outDir.getChildFile (model).getChildFile (input.getFileNameWithoutExtension());
