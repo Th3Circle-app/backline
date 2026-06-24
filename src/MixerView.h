@@ -72,7 +72,7 @@ struct ChannelStrip : public juce::Component
         if (onSelectClick) onSelectClick();
     }
 
-    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, sendsRow, outputRow, autoRow;
+    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, autoRow;
 
     void resized() override
     {
@@ -88,9 +88,10 @@ struct ChannelStrip : public juce::Component
             r.removeFromBottom (4);
 
             insertArea = r.removeFromTop (38); r.removeFromTop (3);
-            sendsRow   = r.removeFromTop (15); r.removeFromTop (2);
-            outputRow  = r.removeFromTop (15); r.removeFromTop (2);
-            autoRow    = r.removeFromTop (15); r.removeFromTop (3);
+            inRow      = r.removeFromTop (14); r.removeFromTop (2);
+            sendsRow   = r.removeFromTop (14); r.removeFromTop (2);
+            outputRow  = r.removeFromTop (14); r.removeFromTop (2);
+            autoRow    = r.removeFromTop (14); r.removeFromTop (3);
             pan.setBounds (r.removeFromTop (24).withSizeKeepingCentre (24, 24)); r.removeFromTop (2);
             valueBox = r.removeFromTop (13); r.removeFromTop (3);
         }
@@ -137,20 +138,27 @@ struct ChannelStrip : public juce::Component
                 g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
                 g.drawText (t, b.reduced (6, 0), juce::Justification::centredLeft, true);
             };
+            rowSlot (inRow,     "In 1-2",     skin.text);
             rowSlot (sendsRow,  "Sends",      skin.muted);
             rowSlot (outputRow, "Stereo Out", skin.text);
             rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f));
         }
 
-        if (! valueBox.isEmpty())                                    // dB value readout
+        if (! valueBox.isEmpty())                                    // two dB value boxes (input | output)
         {
-            g.setColour (juce::Colour (0xff2a2a2a));
-            g.fillRoundedRectangle (valueBox.toFloat(), 2.0f);
+            auto vbx = valueBox;
+            auto right = vbx.removeFromRight (vbx.getWidth() / 2 - 1);
+            vbx.removeFromRight (2);
             const double v  = fader.getValue();
             const float  db = 20.0f * (float) std::log10 (juce::jmax (1.0e-4, v));
-            g.setColour (db > 0.05f ? juce::Colour (0xffe0b020) : skin.text);
-            g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::plain)));
-            g.drawText (juce::String (db, 1), valueBox, juce::Justification::centred, false);
+            g.setColour (juce::Colour (0xff2a2a2a));
+            g.fillRoundedRectangle (vbx.toFloat(), 2.0f);
+            g.fillRoundedRectangle (right.toFloat(), 2.0f);
+            g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.0f, juce::Font::plain)));
+            g.setColour (skin.text);
+            g.drawText ("0.0", vbx, juce::Justification::centred, false);
+            g.setColour (db > 0.05f ? juce::Colours::red : juce::Colour (0xff7fcf7f));
+            g.drawText (juce::String (db, 1), right, juce::Justification::centred, false);
         }
 
         if (! tickArea.isEmpty())                                    // dB scale beside the fader

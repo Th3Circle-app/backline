@@ -57,7 +57,7 @@ public:
 
         auto box = [&] (juce::Rectangle<int> b, const juce::String& title, const juce::StringArray& rows)
         {
-            if (b.getHeight() < 22) return;
+            if (b.getHeight() < 20) return;
             g.setColour (skin.control.darker (0.12f));
             g.fillRoundedRectangle (b.toFloat(), 4.0f);
             g.setColour (skin.windowBg.darker (0.3f));
@@ -66,20 +66,30 @@ public:
             g.setColour (skin.accent);
             g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
             g.drawText (title, in.removeFromTop (15), juce::Justification::topLeft, false);
-            g.setColour (skin.muted);
             g.setFont (juce::Font (juce::FontOptions().withHeight (10.5f)));
-            for (auto& row : rows) { if (in.getHeight() < 14) break; g.drawText (row, in.removeFromTop (15), juce::Justification::topLeft, false); }
+            for (auto& row : rows)
+            {
+                if (in.getHeight() < 14) break;
+                auto rr = in.removeFromTop (15);
+                const int barIdx = row.indexOfChar ('|');                  // "Label|Value" rows
+                if (barIdx >= 0)
+                {
+                    g.setColour (skin.muted); g.drawText (row.substring (0, barIdx), rr, juce::Justification::topLeft, false);
+                    g.setColour (skin.text);  g.drawText (row.substring (barIdx + 1), rr, juce::Justification::topRight, false);
+                }
+                else { g.setColour (skin.muted); g.drawText (row, rr, juce::Justification::topLeft, false); }
+            }
         };
 
         auto a = paramArea;
-        box (a.removeFromTop (72), "Quick Help", { selName.isNotEmpty() ? selName
-                                                                        : juce::String ("Select a track to edit its"),
-                                                   selName.isNotEmpty() ? juce::String ("Audio region selected.")
-                                                                        : juce::String ("parameters + channel strip.") });
-        a.removeFromTop (6);
-        box (a.removeFromTop (juce::jmin (a.getHeight() / 2, 104)), "Region", { "Mute", "Loop", "Fade In / Out", "Gain" });
-        a.removeFromTop (6);
-        box (a, "Track", { "Icon", "Color", "Channel", "Freeze" });
+        box (a.removeFromTop (58), "Quick Help", { selName.isNotEmpty() ? selName : juce::String ("No selection"),
+                                                   selName.isNotEmpty() ? juce::String ("Audio region.") : juce::String ("Click a track to edit.") });
+        a.removeFromTop (5);
+        box (a.removeFromTop (38), "Movie", { movieName.isNotEmpty() ? movieName : juce::String ("No movie") });
+        a.removeFromTop (5);
+        box (a.removeFromTop (juce::jmin (a.getHeight() / 2, 92)), "Region", { "Mute|", "Loop|", "Quantize|off", "Gain|0.0 dB" });
+        a.removeFromTop (5);
+        box (a, "Track", { "Channel|Audio", "Input|In 1-2", "Freeze|off", "Flex|off" });
     }
 
     void resized() override
@@ -102,9 +112,11 @@ private:
     {
         sel.reset();
         selName = {};
+        movieName = {};
         if (groups != nullptr && grp >= 0 && grp < (int) groups->size())
         {
             auto* G = (*groups)[(size_t) grp].get();
+            movieName = G->name;
             if (trk >= 0 && trk < (int) G->tracks.size())
             {
                 auto* t = G->tracks[(size_t) trk].get();
@@ -139,7 +151,7 @@ private:
     const std::vector<std::unique_ptr<VideoGroup>>* groups = nullptr;
     int grp = -1, trk = -1;
     juce::Rectangle<int> paramArea;
-    juce::String selName;
+    juce::String selName, movieName;
     std::unique_ptr<ChannelStrip> sel;
     ChannelStrip master { true };
 };
