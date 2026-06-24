@@ -81,6 +81,8 @@ public:
 
     /** Offline-renders the current mix (active group's clips + mute/solo gains) to a stereo WAV. */
     bool renderMixToFile (const juce::File& outWav, double lengthSeconds);
+    /** Peak magnitude (0..1) of a clip's source region, for Normalize. */
+    float clipPeak (int trackId, double sourceIn, double duration);
 
     /** Detects onset/beat times (seconds, in the source) of a loaded track. */
     std::vector<double> computeTrackOnsets (int trackId);

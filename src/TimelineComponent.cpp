@@ -695,6 +695,7 @@ void TimelineComponent::paint (juce::Graphics& g)
 //==============================================================================
 double TimelineComponent::applySnap (double ts) const
 {
+    if (frameSnap) return juce::jmax (0.0, std::round (ts * 30.0) / 30.0);   // quantize to video frames
     const double pps = (dragPps > 0.0 ? dragPps : pixelsPerSecond());
     if (pps <= 0.0) return ts;
     const double thr = 10.0 / pps;   // 10px snap radius

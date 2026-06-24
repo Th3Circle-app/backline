@@ -1047,7 +1047,9 @@ private:
         m.addSubMenu ("Fade In", fin);
         m.addSubMenu ("Fade Out", fout);
         m.addItem (5, "Remove Fades");
+        m.addItem (7, "Crossfade with Previous");
         m.addSeparator();
+        m.addItem (8, "Normalize");
         m.addItem (6, "Reset Clip Gain (0 dB)");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
@@ -1057,6 +1059,8 @@ private:
                 else if (r >= 10 && r <= 13) applyFade (0, r - 10);
                 else if (r >= 20 && r <= 23) applyFade (1, r - 20);
                 else if (r == 5) applyFade (2);
+                else if (r == 7) crossfadeWithPrevious();
+                else if (r == 8) normalizeSelectedClip();
                 else if (r == 6 && validClip (g, t, c))
                 {
                     pushUndo();
@@ -1081,6 +1085,48 @@ private:
         else                { nc.fadeIn = 0.0; nc.fadeOut = 0.0; }
         clipChanged (selGroup, selTrack, selClip, nc);
         timeline.repaint();
+    }
+
+    // Set the selected clip's gain so its loudest peak hits ~ -0.3 dBFS.
+    void normalizeSelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to normalize", juce::dontSendNotification); return; }
+        auto* tr = groups[(size_t) selGroup]->tracks[(size_t) selTrack].get();
+        const auto& c = tr->clips[(size_t) selClip];
+        const float pk = audioEngine.clipPeak (tr->engineId, c.sourceIn, c.duration);
+        if (pk <= 1.0e-4f) { titleLabel.setText ("Clip is silent - nothing to normalize", juce::dontSendNotification); return; }
+        pushUndo();
+        AudioClip nc = c;
+        nc.gainDb = juce::jlimit (-24.0f, 24.0f, juce::Decibels::gainToDecibels (1.0f / pk) - 0.3f);
+        clipChanged (selGroup, selTrack, selClip, nc);
+        titleLabel.setText ("Normalized (" + juce::String (nc.gainDb, 1) + " dB)", juce::dontSendNotification);
+    }
+
+    // Crossfade the selected clip with the previous clip on its track (extends the previous tail to overlap).
+    void crossfadeWithPrevious()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to crossfade", juce::dontSendNotification); return; }
+        auto& cl = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips;
+        const double selStart = cl[(size_t) selClip].timelineStart;
+        int prev = -1; double bestEnd = -1.0;
+        for (int i = 0; i < (int) cl.size(); ++i)
+            if (i != selClip && cl[(size_t) i].timelineStart < selStart && cl[(size_t) i].timelineEnd() > bestEnd)
+            { bestEnd = cl[(size_t) i].timelineEnd(); prev = i; }
+        if (prev < 0) { titleLabel.setText ("No earlier clip on this track to crossfade with", juce::dontSendNotification); return; }
+        pushUndo();
+        const double xf = 0.5;
+        const double srcLen = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->sourceLength;
+        AudioClip p = cl[(size_t) prev];
+        const double maxDur = juce::jmax (kMinClipSeconds, (srcLen > 0.0 ? srcLen : p.duration + xf) - p.sourceIn);
+        p.duration = juce::jlimit (kMinClipSeconds, maxDur, (selStart + xf) - p.timelineStart);   // extend tail to overlap
+        const double overlap = juce::jmax (0.05, p.timelineEnd() - selStart);
+        p.fadeOut = overlap;
+        AudioClip s = cl[(size_t) selClip]; s.fadeIn = overlap;
+        cl[(size_t) prev] = p; cl[(size_t) selClip] = s;
+        pushActiveClips (selGroup);
+        updateTimelineSize();
+        timeline.repaint();
+        titleLabel.setText ("Crossfaded (" + juce::String (overlap, 2) + " s)", juce::dontSendNotification);
     }
 
     void openAddVideo()
@@ -1714,6 +1760,7 @@ private:
             m.addCommandItem (&commandManager, LSCmd::ToggleAutomation);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            m.addItem (9061, "Snap to Frames", true, frameSnapOn);
             m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
             markersMenu();
             m.addSeparator();
@@ -1771,6 +1818,8 @@ private:
             case 9076: applyFade (1, 2); break;  case 9077: applyFade (1, 3); break;
             case 9078: applyFade (2); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
+            case 9061: frameSnapOn = ! frameSnapOn; timeline.setFrameSnap (frameSnapOn);
+                       titleLabel.setText (frameSnapOn ? "Snap to frames: on" : "Snap to frames: off", juce::dontSendNotification); break;
             case 9050: toggleMixer(); break;
             default:
                 if (menuItemID >= 9100 && menuItemID < 9200 && validGroup (activeGroup))   // Go to Marker N
@@ -2699,6 +2748,7 @@ private:
     AudioClip clipboardClip;  // copy/paste clipboard
     bool      hasClipboard = false;
     bool      automationVisible = false;   // volume-automation overlay/read is on
+    bool      frameSnapOn = false;         // snap edits to video frames
 
     MixerView mixerView;
     bool      mixerVisible = false;

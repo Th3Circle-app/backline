@@ -339,6 +339,21 @@ void AudioEngine::setTrackClips (int trackId, const std::vector<AudioClip>& clip
     // 'staged' (now the old vector) frees here, outside the lock
 }
 
+float AudioEngine::clipPeak (int trackId, double sourceIn, double duration)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    auto* t = findTrack (trackId);
+    if (t == nullptr || t->audio.getNumSamples() == 0) return 0.0f;
+    const double rt = mixer.rate.load();
+    const int start = juce::jlimit (0, t->audio.getNumSamples() - 1, (int) (sourceIn * rt));
+    const int len   = juce::jmin (t->audio.getNumSamples() - start, (int) (duration * rt));
+    if (len <= 0) return 0.0f;
+    float pk = 0.0f;
+    for (int ch = 0; ch < t->audio.getNumChannels(); ++ch)
+        pk = juce::jmax (pk, t->audio.getMagnitude (ch, start, len));
+    return pk;
+}
+
 void AudioEngine::setTrackAutomation (int trackId, const std::vector<std::pair<double, float>>& env, bool on)
 {
     std::vector<std::pair<double, float>> staged (env);   // copy outside the audio lock
