@@ -58,13 +58,13 @@ public:
         auto box = [&] (juce::Rectangle<int> b, const juce::String& title, const juce::StringArray& rows)
         {
             if (b.getHeight() < 20) return;
-            g.setColour (skin.control.darker (0.12f));
+            g.setColour (skin.control.brighter (0.07f));               // lighter box so it stands out on the panel
             g.fillRoundedRectangle (b.toFloat(), 4.0f);
             g.setColour (skin.windowBg.darker (0.3f));
             g.drawRoundedRectangle (b.toFloat(), 4.0f, 1.0f);
             auto in = b.reduced (8, 5);
-            g.setColour (skin.accent);
-            g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
+            g.setColour (juce::Colours::white.withAlpha (0.92f));       // bright header
+            g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f)));
             g.drawText (title, in.removeFromTop (15), juce::Justification::topLeft, false);
             g.setFont (juce::Font (juce::FontOptions().withHeight (10.5f)));
             for (auto& row : rows)
@@ -74,10 +74,10 @@ public:
                 const int barIdx = row.indexOfChar ('|');                  // "Label|Value" rows
                 if (barIdx >= 0)
                 {
-                    g.setColour (skin.muted); g.drawText (row.substring (0, barIdx), rr, juce::Justification::topLeft, false);
-                    g.setColour (skin.text);  g.drawText (row.substring (barIdx + 1), rr, juce::Justification::topRight, false);
+                    g.setColour (juce::Colour (0xffdcdcdc)); g.drawText (row.substring (0, barIdx), rr, juce::Justification::topLeft, false);
+                    g.setColour (juce::Colours::white);      g.drawText (row.substring (barIdx + 1), rr, juce::Justification::topRight, false);
                 }
-                else { g.setColour (skin.muted); g.drawText (row, rr, juce::Justification::topLeft, false); }
+                else { g.setColour (juce::Colour (0xffdcdcdc)); g.drawText (row, rr, juce::Justification::topLeft, false); }
             }
         };
 
