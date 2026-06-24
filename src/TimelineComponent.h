@@ -59,6 +59,7 @@ public:
     std::function<void()>                          onAddVideo;
     std::function<void (bool, double, double)>      onLoopChanged;
     std::function<void()>                           onZoomChanged;   // zoom changed -> parent should resize the timeline
+    std::function<void (int)>                       onMarkerRename;  // double-clicked a ruler marker (index)
     std::function<void (double)>                    onLoopMenu;      // right-click lane: timeline time (seconds)
     std::function<void (int, int)>                  onTrackMenu;     // right-click an audio track header (group, track)
     std::function<void (int)>                       onGroupMenu;     // right-click a video header (group)

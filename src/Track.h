@@ -26,6 +26,14 @@ struct AudioTrack
 };
 
 //==============================================================================
+/** A named timeline marker (scene/hit point) for syncing music to picture. */
+struct Marker
+{
+    double       time = 0.0;   // position on the timeline (seconds)
+    juce::String name;
+};
+
+//==============================================================================
 /** A video and the audio tracks that belong to it (one ad + its candidate
     songs). Each group is an independent mini-timeline; one group is "active"
     at a time (its video previews and its audio plays). */
@@ -39,4 +47,5 @@ struct VideoGroup
     bool         videoSolo = false;
     std::vector<std::unique_ptr<AudioTrack>> tracks;
     std::vector<double> cutMarkers;    // scene-cut times on the timeline (seconds)
+    std::vector<Marker> markers;       // user hit-point markers on the timeline
 };

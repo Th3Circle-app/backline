@@ -36,7 +36,9 @@ struct EditSnapshot
     int selGroup = -1, selTrack = -1, selClip = -1;
 };
 
-namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight, Undo, Redo }; }
+namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight, Undo, Redo,
+                          AddMarker, PrevMarker, NextMarker, ZoomFit, GoToTimecode,
+                          CopyClip, PasteClip, DuplicateClip }; }
 
 //==============================================================================
 /** A floating window that hosts one effect's editor (native generic UI or the
@@ -252,6 +254,7 @@ public:
         timeline.onTrackMenu     = [this] (int g, int t) { showTrackMenu (g, t); };
         timeline.onGroupMenu     = [this] (int g) { showGroupMenu (g); };
         timeline.onZoomChanged   = [this] { updateTimelineSize(); };
+        timeline.onMarkerRename  = [this] (int i) { renameMarker (i); };
         timeline.setGroups (&groups);
         timelineViewport.setViewedComponent (&timeline, false);
         timelineViewport.setScrollBarsShown (true, true);   // vertical + horizontal (fixed-zoom scroll)
@@ -1253,7 +1256,9 @@ private:
     void getAllCommands (juce::Array<juce::CommandID>& c) override
     {
         const juce::CommandID ids[] = { LSCmd::TogglePlay, LSCmd::Split, LSCmd::DeleteClip, LSCmd::ToggleLoop,
-                                        LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight, LSCmd::Undo, LSCmd::Redo };
+                                        LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight, LSCmd::Undo, LSCmd::Redo,
+                                        LSCmd::AddMarker, LSCmd::PrevMarker, LSCmd::NextMarker, LSCmd::ZoomFit, LSCmd::GoToTimecode,
+                                        LSCmd::CopyClip, LSCmd::PasteClip, LSCmd::DuplicateClip };
         c.addArray (ids, juce::numElementsInArray (ids));
     }
 
@@ -1270,6 +1275,14 @@ private:
             case LSCmd::NudgeRight: info.setInfo ("Nudge right", "Nudge selected clip later", "Edit", 0); break;
             case LSCmd::Undo:       info.setInfo ("Undo", "Undo the last edit", "Edit", 0); break;
             case LSCmd::Redo:       info.setInfo ("Redo", "Redo the last undone edit", "Edit", 0); break;
+            case LSCmd::AddMarker:  info.setInfo ("Add marker", "Add a marker at the playhead", "Markers", 0); break;
+            case LSCmd::PrevMarker: info.setInfo ("Previous marker", "Move playhead to the previous marker", "Markers", 0); break;
+            case LSCmd::NextMarker: info.setInfo ("Next marker", "Move playhead to the next marker", "Markers", 0); break;
+            case LSCmd::ZoomFit:    info.setInfo ("Zoom to fit", "Fit the whole timeline to the window", "View", 0); break;
+            case LSCmd::GoToTimecode: info.setInfo ("Go to position...", "Move the playhead to a typed position", "Transport", 0); break;
+            case LSCmd::CopyClip:   info.setInfo ("Copy clip", "Copy the selected clip", "Edit", 0); break;
+            case LSCmd::PasteClip:  info.setInfo ("Paste clip", "Paste the copied clip at the playhead", "Edit", 0); break;
+            case LSCmd::DuplicateClip: info.setInfo ("Duplicate clip", "Duplicate the selected clip", "Edit", 0); break;
             default: break;
         }
         info.setActive (true);
@@ -1292,6 +1305,14 @@ private:
             case LSCmd::NudgeRight: nudgeSelected ( 0.05); return true;
             case LSCmd::Undo: undo(); return true;
             case LSCmd::Redo: redo(); return true;
+            case LSCmd::AddMarker:  addMarkerAtPlayhead(); return true;
+            case LSCmd::PrevMarker: gotoAdjacentMarker (-1); return true;
+            case LSCmd::NextMarker: gotoAdjacentMarker (1);  return true;
+            case LSCmd::ZoomFit:    timeline.zoomToFit(); return true;
+            case LSCmd::GoToTimecode: goToTimecode(); return true;
+            case LSCmd::CopyClip:      copySelectedClip(); return true;
+            case LSCmd::PasteClip:     pasteClipAtPlayhead(); return true;
+            case LSCmd::DuplicateClip: duplicateSelectedClip(); return true;
             default: return false;
         }
     }
@@ -1303,6 +1324,107 @@ private:
         AudioClip c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
         c.timelineStart = juce::jmax (0.0, c.timelineStart + delta);
         clipChanged (selGroup, selTrack, selClip, c);
+    }
+
+    //== Markers ==
+    void addMarkerAtPlayhead()
+    {
+        if (! validGroup (activeGroup)) { titleLabel.setText ("Open a video to add markers", juce::dontSendNotification); return; }
+        auto& mks = groups[(size_t) activeGroup]->markers;
+        pushUndo();
+        mks.push_back ({ playhead, "Marker " + juce::String ((int) mks.size() + 1) });
+        std::sort (mks.begin(), mks.end(), [] (const Marker& a, const Marker& b) { return a.time < b.time; });
+        timeline.repaint();
+        titleLabel.setText ("Marker added at " + formatTimecode (playhead), juce::dontSendNotification);
+    }
+    void gotoAdjacentMarker (int dir)
+    {
+        if (! validGroup (activeGroup)) return;
+        double best = -1.0;
+        for (auto& m : groups[(size_t) activeGroup]->markers)
+        {
+            if (dir > 0 && m.time > playhead + 1.0e-3 && (best < 0.0 || m.time < best)) best = m.time;
+            if (dir < 0 && m.time < playhead - 1.0e-3 && (best < 0.0 || m.time > best)) best = m.time;
+        }
+        if (best >= 0.0) { playhead = best; seekAll (best); timeline.setPlayhead (best); timeline.repaint(); }
+    }
+    void renameMarker (int idx)
+    {
+        if (! validGroup (activeGroup)) return;
+        auto& mks = groups[(size_t) activeGroup]->markers;
+        if (idx < 0 || idx >= (int) mks.size()) return;
+        auto* w = new juce::AlertWindow ("Marker", "Marker name:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("nm", mks[(size_t) idx].name);
+        w->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Delete", 2);
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, idx] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (validGroup (activeGroup))
+            {
+                auto& m2 = groups[(size_t) activeGroup]->markers;
+                if (idx < (int) m2.size())
+                {
+                    if      (r == 1) { pushUndo(); m2[(size_t) idx].name = w->getTextEditorContents ("nm"); }
+                    else if (r == 2) { pushUndo(); m2.erase (m2.begin() + idx); }
+                }
+            }
+            timeline.repaint();
+            restoreKeyFocus();
+        }), false);
+    }
+
+    //== Go to a typed position; Copy / Paste / Duplicate clips ==
+    void goToTimecode()
+    {
+        auto* w = new juce::AlertWindow ("Go to position", "HH:MM:SS:FF, M:SS, or seconds:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("pos", formatTimecode (playhead));
+        w->addButton ("Go",     1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (r == 1) { const double s = parsePosition (w->getTextEditorContents ("pos"));
+                          if (s >= 0.0) { playhead = s; seekAll (s); timeline.setPlayhead (s); timeline.repaint(); } }
+            restoreKeyFocus();
+        }), false);
+    }
+    void copySelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to copy", juce::dontSendNotification); return; }
+        clipboardClip = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        hasClipboard = true;
+        titleLabel.setText ("Clip copied", juce::dontSendNotification);
+    }
+    void pasteClipAtPlayhead()
+    {
+        if (! hasClipboard) { titleLabel.setText ("Nothing to paste", juce::dontSendNotification); return; }
+        if (! validTrack (selGroup, selTrack)) { titleLabel.setText ("Select a track to paste into", juce::dontSendNotification); return; }
+        pushUndo();
+        AudioClip nc = clipboardClip;
+        nc.timelineStart = juce::jmax (0.0, playhead);
+        auto& cl = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips;
+        cl.push_back (nc);
+        selClip = (int) cl.size() - 1;
+        pushActiveClips (selGroup);
+        updateTimelineSize();
+        timeline.setSelection (selGroup, selTrack, selClip);
+        timeline.repaint();
+    }
+    void duplicateSelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to duplicate", juce::dontSendNotification); return; }
+        pushUndo();
+        auto& cl = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips;
+        AudioClip nc = cl[(size_t) selClip];
+        nc.timelineStart = nc.timelineEnd();          // place the copy right after the original
+        cl.push_back (nc);
+        selClip = (int) cl.size() - 1;
+        pushActiveClips (selGroup);
+        updateTimelineSize();
+        timeline.setSelection (selGroup, selTrack, selClip);
+        timeline.repaint();
     }
 
     static juce::String profileName (KeyProfile p)
@@ -1326,6 +1448,12 @@ private:
         auto add = [&] (int cmd, const juce::String& desc) { const auto k = juce::KeyPress::createFromDescription (desc); if (k.isValid()) km->addKeyPress (cmd, k); };
         add (LSCmd::Undo, "command + Z");
         add (LSCmd::Redo, "command + shift + Z");
+        add (LSCmd::AddMarker,     "M");
+        add (LSCmd::CopyClip,      "command + C");
+        add (LSCmd::PasteClip,     "command + V");
+        add (LSCmd::DuplicateClip, "command + D");
+        add (LSCmd::ZoomFit,       "Z");
+        add (LSCmd::GoToTimecode,  "command + G");
         switch (p)
         {
             case KeyProfile::Logic:    add (LSCmd::Split, "command + T"); add (LSCmd::ToggleLoop, "C");                   add (LSCmd::ToggleSnap, "command + shift + S"); break;
@@ -1445,6 +1573,25 @@ private:
                              m.addItem (9017, StemSplitter::isInstalled() ? "Reinstall Stem Splitter..." : "Set Up Stem Splitter (one-time)...", ! installing); };
         auto pluginTools = [&] { m.addItem (9014, "Plugins Window...");
                                  m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
+        auto markersMenu = [&] {
+            juce::PopupMenu mm;
+            mm.addCommandItem (&commandManager, LSCmd::AddMarker);
+            mm.addCommandItem (&commandManager, LSCmd::PrevMarker);
+            mm.addCommandItem (&commandManager, LSCmd::NextMarker);
+            if (validGroup (activeGroup) && ! groups[(size_t) activeGroup]->markers.empty())
+            {
+                mm.addSeparator();
+                juce::PopupMenu go;
+                const auto& mks = groups[(size_t) activeGroup]->markers;
+                for (int i = 0; i < (int) mks.size() && i < 90; ++i)
+                    go.addItem (9100 + i, mks[(size_t) i].name + "  (" + formatTimecode (mks[(size_t) i].time) + ")");
+                mm.addSubMenu ("Go to Marker", go);
+            }
+            m.addSubMenu ("Markers", mm);
+        };
+        auto clipEdits = [&] { m.addCommandItem (&commandManager, LSCmd::CopyClip);
+                               m.addCommandItem (&commandManager, LSCmd::PasteClip);
+                               m.addCommandItem (&commandManager, LSCmd::DuplicateClip); };
 
         if (name == "File")
         {
@@ -1464,6 +1611,7 @@ private:
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::Split);
             m.addCommandItem (&commandManager, LSCmd::DeleteClip);
+            clipEdits();
             m.addSeparator();
             const bool hasClip = validClip (selGroup, selTrack, selClip);
             const char* shapes[] = { "Linear", "Exponential", "S-Curve (Bell)", "Logarithmic" };
@@ -1500,15 +1648,19 @@ private:
         {
             m.addCommandItem (&commandManager, LSCmd::TogglePlay);
             if (name == "Navigate") m.addItem (9030, "Go to Start");
+            m.addCommandItem (&commandManager, LSCmd::GoToTimecode);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
             m.addCommandItem (&commandManager, LSCmd::NudgeLeft);
             m.addCommandItem (&commandManager, LSCmd::NudgeRight);
+            m.addSeparator();
+            markersMenu();
         }
         else if (name == "Clip")            // Pro Tools
         {
             m.addCommandItem (&commandManager, LSCmd::Split);
             m.addCommandItem (&commandManager, LSCmd::DeleteClip);
+            clipEdits();
         }
         else if (name == "Event")           // Pro Tools
         {
@@ -1516,6 +1668,8 @@ private:
             m.addCommandItem (&commandManager, LSCmd::NudgeRight);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
+            m.addSeparator();
+            markersMenu();
         }
         else if (name == "Record")          // Logic (recording is Phase C)
         {
@@ -1525,9 +1679,11 @@ private:
         {
             m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
+            m.addCommandItem (&commandManager, LSCmd::ZoomFit);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
+            markersMenu();
             m.addSeparator();
             addSkin (m);
         }
@@ -1584,7 +1740,14 @@ private:
             case 9078: applyFade (2); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9050: toggleMixer(); break;
-            default: break;
+            default:
+                if (menuItemID >= 9100 && menuItemID < 9200 && validGroup (activeGroup))   // Go to Marker N
+                {
+                    const int i = menuItemID - 9100;
+                    auto& mks = groups[(size_t) activeGroup]->markers;
+                    if (i < (int) mks.size()) { playhead = mks[(size_t) i].time; seekAll (playhead); timeline.setPlayhead (playhead); timeline.repaint(); }
+                }
+                break;
         }
     }
 
@@ -2178,6 +2341,9 @@ private:
                     go->setProperty ("videoMute", g->videoMute);
                     go->setProperty ("videoSolo", g->videoSolo);
                     go->setProperty ("cuts", doublesToVar (g->cutMarkers));
+                    juce::var marr;
+                    for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
+                    go->setProperty ("markers", marr);
 
                     juce::var tarr;
                     for (auto& t : g->tracks)
@@ -2288,6 +2454,8 @@ private:
                 grp->videoMute = (bool)   gv.getProperty ("videoMute", false);
                 grp->videoSolo = (bool)   gv.getProperty ("videoSolo", false);
                 grp->cutMarkers = varToDoubles (gv["cuts"]);
+                if (auto* ma = gv["markers"].getArray())
+                    for (auto& mv : *ma) grp->markers.push_back ({ (double) mv.getProperty ("t", 0.0), mv["name"].toString() });
                 if (! grp->file.existsAsFile()) ++missingMedia;
 
                 if (auto* tarr = gv["tracks"].getArray())
@@ -2477,6 +2645,8 @@ private:
     bool splitting = false;   // a stem split is in progress (offline render on a worker thread)
     bool installing = false;  // the one-time Demucs setup is running
     int  ptEditMode = 1;      // Pro Tools edit mode: 0 Shuffle, 1 Slip, 2 Spot, 3 Grid
+    AudioClip clipboardClip;  // copy/paste clipboard
+    bool      hasClipboard = false;
 
     MixerView mixerView;
     bool      mixerVisible = false;

@@ -283,6 +283,22 @@ void TimelineComponent::paint (juce::Graphics& g)
     g.setColour (skin.windowBg.darker (0.5f));   // ruler bottom border
     g.fillRect (headerW, rulerHeight - 1, w - headerW, 1);
 
+    if (const auto* agm = activeG())             // hit-point markers (flag on the ruler + faint line down the lanes)
+    {
+        for (const auto& mk : agm->markers)
+        {
+            const float mx = (float) xForTime (mk.time);
+            if (mx < (float) headerW - 2.0f || mx > (float) w) continue;
+            g.setColour (juce::Colour (0x44e0a93a)); g.drawLine (mx, (float) rulerHeight, mx, (float) h, 1.0f);
+            g.setColour (juce::Colour (0xffe0a93a));
+            juce::Path flag; flag.addTriangle (mx, 2.0f, mx + 9.0f, 4.5f, mx, 11.0f); g.fillPath (flag);
+            g.drawLine (mx, 2.0f, mx, (float) rulerHeight - 1.0f, 1.0f);
+            if (mk.name.isNotEmpty())
+            { g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
+              g.drawText (mk.name, (int) mx + 11, 1, 96, rulerHeight - 2, juce::Justification::centredLeft, false); }
+        }
+    }
+
     const auto rows = buildRows();
     for (const auto& row : rows)
     {
@@ -826,6 +842,18 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
     // ---- ruler = loop strip ----
     if (e.y < rulerHeight)
     {
+        if (const auto* agm = activeG())          // click a marker flag -> seek there; double-click -> rename
+            for (int i = 0; i < (int) agm->markers.size(); ++i)
+            {
+                const float mx = (float) xForTime (agm->markers[(size_t) i].time);
+                if (std::abs ((float) e.x - mx) <= 6.0f)
+                {
+                    if (e.getNumberOfClicks() >= 2) { if (onMarkerRename) onMarkerRename (i); }
+                    else { playhead = agm->markers[(size_t) i].time; repaint(); if (onSeek) onSeek (playhead); }
+                    return;
+                }
+            }
+
         dragMode = Drag::Loop;
         movedDuringLoop = false;
         loopResizing = false;
