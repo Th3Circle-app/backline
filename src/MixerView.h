@@ -165,8 +165,8 @@ struct ChannelStrip : public juce::Component
 
         if (! tickArea.isEmpty())                                    // dB scale beside the fader
         {
-            g.setColour (skin.muted.withAlpha (0.65f));
-            g.setFont (juce::Font (juce::FontOptions().withHeight (7.0f)));
+            g.setColour (skin.muted.withAlpha (0.9f));
+            g.setFont (juce::Font (juce::FontOptions().withHeight (7.5f)));
             for (int m : { 0, 3, 6, 12, 18, 24, 36, 48 })
             {
                 const int y = tickArea.getY() + (int) (((float) m / 60.0f) * tickArea.getHeight());

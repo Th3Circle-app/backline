@@ -50,7 +50,7 @@ struct Skin
             case Logic:   // 1:1 spec: light-grey chrome, #575757 surfaces, cool #2D2A35 lanes
                 s.name = "Logic Pro";
                 s.windowBg = juce::Colour (0xff2d2a35); s.panel = juce::Colour (0xff575757); s.control = juce::Colour (0xff6a6a6a);
-                s.accent = juce::Colour (0xff4f86d8); s.text = juce::Colour (0xfff2f2f2); s.muted = juce::Colour (0xffa8a8a8);
+                s.accent = juce::Colour (0xff4f86d8); s.text = juce::Colour (0xfff2f2f2); s.muted = juce::Colour (0xffc6c6c6);
                 s.ruler = juce::Colour (0xff3b3b3b); s.headerTop = juce::Colour (0xff5e5e5e); s.headerBottom = juce::Colour (0xff525252);
                 s.activeRow = juce::Colour (0xff34313b); s.activeStrip = juce::Colour (0xff4f86d8);
                 s.rowEven = juce::Colour (0xff575757); s.rowOdd = juce::Colour (0xff525252);
