@@ -19,6 +19,7 @@ struct ChannelStrip : public juce::Component
     AudioEngine* engine = nullptr;
     Skin skin = Skin::forDaw (Skin::Layback);
     float meter = 0.0f;
+    float peakHold = 0.0f;       // slow-falling peak for the numeric readout + hold tick
     juce::StringArray fxNames;   // cached insert names (paint must not lock the audio engine)
 
     juce::Slider fader, pan;
@@ -71,7 +72,8 @@ struct ChannelStrip : public juce::Component
     void setMeter (float pk)
     {
         const float v = juce::jlimit (0.0f, 1.0f, pk);
-        meter = juce::jmax (v, meter * 0.80f);   // fast attack, slow decay
+        meter = juce::jmax (v, meter * 0.80f);                 // fast attack, slow decay
+        peakHold = (v >= peakHold) ? v : juce::jmax (v, peakHold - 0.0035f);   // peak-hold, slow fall
         repaint();
     }
 
@@ -87,7 +89,7 @@ struct ChannelStrip : public juce::Component
         if (onSelectClick) onSelectClick();
     }
 
-    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, groupRow, autoRow, riRow;
+    juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, groupRow, autoRow, riRow, peakLabel;
 
     void resized() override
     {
@@ -111,11 +113,20 @@ struct ChannelStrip : public juce::Component
         if (! isMaster) { pan.setBounds (r.removeFromTop (24).withSizeKeepingCentre (24, 24)); r.removeFromTop (2); }
         valueBox = r.removeFromTop (13); r.removeFromTop (3);
 
+        peakLabel = r.removeFromTop (11); r.removeFromTop (2);   // numeric peak-hold dB readout above the meter
         meterBounds = r.removeFromRight (9);
         r.removeFromRight (2);
-        tickArea = r.removeFromRight (16);
+        tickArea = r.removeFromRight (18);     // dB scale numbers
         r.removeFromRight (2);
         fader.setBounds (r);
+    }
+
+    // peak (0..1 linear) -> meter fill 0..1 over a 60 dB window (so the dB scale lines up)
+    static float meterNorm (float pk)
+    {
+        if (pk <= 0.0f) return 0.0f;
+        const float db = 20.0f * std::log10 (pk);
+        return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
     }
 
     void paint (juce::Graphics& g) override
@@ -177,29 +188,41 @@ struct ChannelStrip : public juce::Component
             g.drawText (juce::String (db, 1) + " dB", valueBox, juce::Justification::centred, false);
         }
 
-        if (! tickArea.isEmpty())                                    // dB scale beside the fader
+        if (! peakLabel.isEmpty())                                   // numeric peak-hold dB readout
+        {
+            const juce::String txt = peakHold <= 0.0002f ? juce::String ("-\xe2\x88\x9e")
+                                                         : juce::String (20.0f * std::log10 (peakHold), 1);
+            g.setColour (peakHold > 0.96f ? juce::Colours::red : skin.text);
+            g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 8.5f, juce::Font::plain)));
+            g.drawText (txt + " dB", peakLabel, juce::Justification::centred, false);
+        }
+
+        if (! tickArea.isEmpty())                                    // dB level scale (shared by fader + meter)
         {
             g.setColour (skin.muted.withAlpha (0.9f));
             g.setFont (juce::Font (juce::FontOptions().withHeight (7.5f)));
-            for (int m : { 0, 3, 6, 12, 18, 24, 36, 48 })
+            for (int m : { 0, 6, 12, 24, 48 })
             {
                 const int y = tickArea.getY() + (int) (((float) m / 60.0f) * tickArea.getHeight());
-                g.drawText (juce::String (m), tickArea.getX(), y, tickArea.getWidth(), 9, juce::Justification::centredRight, false);
+                g.drawText (m == 0 ? "0" : "-" + juce::String (m), tickArea.getX(), y, tickArea.getWidth(), 9, juce::Justification::centredRight, false);
             }
         }
 
-        if (! meterBounds.isEmpty())                                 // segmented peak meter (mostly green)
+        if (! meterBounds.isEmpty())                                 // dB-scaled segmented peak meter
         {
             g.setColour (juce::Colours::black.withAlpha (0.55f));
             g.fillRect (meterBounds);
             const int segs = juce::jmax (1, meterBounds.getHeight() / 4);
-            const int lit  = (int) (meter * (float) segs);
+            const int lit  = (int) (meterNorm (meter) * (float) segs);
             for (int s = 0; s < lit; ++s)
             {
                 const float f = (float) s / (float) segs;
                 g.setColour (f > 0.96f ? juce::Colours::red : f > 0.85f ? juce::Colour (0xffe0b020) : juce::Colour (0xff4ad07a));
                 g.fillRect (meterBounds.getX(), meterBounds.getBottom() - (s + 1) * 4 + 1, meterBounds.getWidth(), 3);
             }
+            const int phy = meterBounds.getBottom() - (int) (meterNorm (peakHold) * (float) meterBounds.getHeight());   // peak-hold tick
+            g.setColour (juce::Colours::white.withAlpha (0.85f));
+            g.fillRect (meterBounds.getX(), juce::jlimit (meterBounds.getY(), meterBounds.getBottom() - 1, phy), meterBounds.getWidth(), 1);
         }
 
         if (! riRow.isEmpty())                                       // R/I (track) or Bnc (master)

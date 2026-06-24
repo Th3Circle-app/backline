@@ -2355,8 +2355,9 @@ public:
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);
             setResizable (true, true);
-            centreWithSize (1120, 820);
+            centreWithSize (1120, 820);     // restored-down size
             setVisible (true);
+            setFullScreen (true);           // open maximized to the screen, like a real DAW
         }
 
         void closeButtonPressed() override { JUCEApplication::getInstance()->systemRequestedQuit(); }
