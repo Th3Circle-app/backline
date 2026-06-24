@@ -438,6 +438,48 @@ public:
     }
 
     //== Stem splitting (built-in source separation via Demucs) ==
+    // One-time setup: build the Demucs venv (uv fetches Python 3.11 + installs demucs + numpy<2).
+    void installStemSplitter (std::function<void (bool)> onDone)
+    {
+        if (installing) return;
+        const juce::File uv = StemSplitter::findUv();
+        if (uv == juce::File())
+        {
+            titleLabel.setText ("Couldn't find 'uv' to set up the stem splitter - install uv, then retry", juce::dontSendNotification);
+            if (onDone) onDone (false);
+            return;
+        }
+        installing = true;
+        titleLabel.setText ("Setting up stem splitter (one-time, ~200MB download, a few minutes)...", juce::dontSendNotification);
+
+        const juce::File venvDir = StemSplitter::venvDir();
+        const juce::File venvPy  = StemSplitter::venvPython();
+        auto a = alive;
+        std::thread ([this, a, uv, venvDir, venvPy, onDone]
+        {
+            auto run = [] (const juce::File& exe, const juce::StringArray& args) -> int
+            {
+                juce::StringArray cmd; cmd.add (exe.getFullPathName()); cmd.addArray (args);
+                juce::ChildProcess p;
+                if (! p.start (cmd, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr)) return -1;
+                p.readAllProcessOutput();           // block until finished
+                return p.getExitCode();
+            };
+            venvDir.getParentDirectory().createDirectory();
+            bool ok = run (uv, { "venv", "--python", "3.11", venvDir.getFullPathName() }) == 0;
+            if (ok) ok = run (uv, { "pip", "install", "--python", venvPy.getFullPathName(), "demucs", "numpy<2" }) == 0;
+            const bool installed = ok && venvPy.existsAsFile();
+            juce::MessageManager::callAsync ([this, a, installed, onDone]
+            {
+                if (! a->load()) return;
+                installing = false;
+                titleLabel.setText (installed ? "Stem splitter ready" : "Stem splitter setup failed - check 'uv' + network",
+                                    juce::dontSendNotification);
+                if (onDone) onDone (installed);
+            });
+        }).detach();
+    }
+
     // Add a stem as a new track, placed to match the source track's clips. Returns the new track index (-1 on failure).
     int importStemTrack (int g, const juce::File& f, const juce::String& name, const std::vector<AudioClip>& clipsToUse)
     {
@@ -470,7 +512,12 @@ public:
     {
         if (splitting) { titleLabel.setText ("A stem split is already running...", juce::dontSendNotification); return; }
         if (! validTrack (g, t)) { titleLabel.setText ("Select an audio track to split into stems", juce::dontSendNotification); return; }
-        if (! StemSplitter::isInstalled()) { titleLabel.setText ("Stem splitter is still setting up - try again in a moment", juce::dontSendNotification); return; }
+        if (! StemSplitter::isInstalled())   // first run: set up Demucs once, then split automatically
+        {
+            if (installing) { titleLabel.setText ("Stem splitter is installing - it'll run when ready...", juce::dontSendNotification); return; }
+            installStemSplitter ([this, g, t, sixStem] (bool ok) { if (ok) splitTrackIntoStems (g, t, sixStem); });
+            return;
+        }
 
         auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
         const juce::File src = tr->file;
@@ -1323,7 +1370,8 @@ private:
         auto fxItems = [&] { m.addItem (9011, "Insert EQ on Selected Track", hasTrack);
                              m.addItem (9012, "Insert Compressor on Selected Track", hasTrack);
                              m.addItem (9015, "Split Selected Track into Stems (6: voc/drm/bass/gtr/pno/oth)", hasTrack && ! splitting);
-                             m.addItem (9016, "Split Selected Track into Stems (4: voc/drm/bass/oth)", hasTrack && ! splitting); };
+                             m.addItem (9016, "Split Selected Track into Stems (4: voc/drm/bass/oth)", hasTrack && ! splitting);
+                             m.addItem (9017, StemSplitter::isInstalled() ? "Reinstall Stem Splitter..." : "Set Up Stem Splitter (one-time)...", ! installing); };
         auto pluginTools = [&] { m.addItem (9014, "Plugins Window...");
                                  m.addItem (9013, scanning ? "Scanning Plugins..." : "Rescan Plugins", ! scanning); };
 
@@ -1450,6 +1498,7 @@ private:
             case 9014: openPluginListWindow(); break;
             case 9015: splitTrackIntoStems (selGroup, selTrack, true);  break;
             case 9016: splitTrackIntoStems (selGroup, selTrack, false); break;
+            case 9017: installStemSplitter ([] (bool) {}); break;
             case 9013: startPluginScan(); break;
             case 9020: applyKeyProfile (KeyProfile::Layback);  break;
             case 9021: applyKeyProfile (KeyProfile::Logic);    break;
@@ -2255,6 +2304,7 @@ private:
     bool scanning = false;
     bool pluginsScanned = false;
     bool splitting = false;   // a stem split is in progress (offline render on a worker thread)
+    bool installing = false;  // the one-time Demucs setup is running
 
     MixerView mixerView;
     bool      mixerVisible = false;

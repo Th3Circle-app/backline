@@ -37,6 +37,26 @@ namespace StemSplitter
     /** True once the venv exists (the one-time Demucs install has completed). */
     inline bool isInstalled() { return venvPython().existsAsFile(); }
 
+    /** Locate the `uv` installer binary used to build the venv (it fetches its own
+        Python 3.11 + installs Demucs). Returns an invalid File if not found. */
+    inline juce::File findUv()
+    {
+        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        juce::Array<juce::File> candidates;
+       #if JUCE_WINDOWS
+        candidates.add (home.getChildFile (".local/bin/uv.exe"));
+        candidates.add (home.getChildFile ("AppData/Local/Microsoft/WinGet/Links/uv.exe"));
+        candidates.add (juce::File ("C:/Program Files/uv/uv.exe"));
+       #else
+        candidates.add (home.getChildFile (".local/bin/uv"));
+        candidates.add (juce::File ("/usr/local/bin/uv"));
+        candidates.add (juce::File ("/opt/homebrew/bin/uv"));
+        candidates.add (juce::File ("/usr/bin/uv"));
+       #endif
+        for (auto& f : candidates) if (f.existsAsFile()) return f;
+        return {};
+    }
+
     /** The stems a given model produces, in Demucs' output order. */
     inline juce::StringArray stemNames (bool sixStem)
     {
