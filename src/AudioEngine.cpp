@@ -499,9 +499,16 @@ void AudioEngine::addProcessorToTrack (int trackId, std::unique_ptr<juce::AudioP
 
 void AudioEngine::addNativeEffect (int trackId, int which)
 {
-    std::unique_ptr<juce::AudioProcessor> p = (which == 0)
-        ? std::unique_ptr<juce::AudioProcessor> (std::make_unique<NativeEQ>())
-        : std::unique_ptr<juce::AudioProcessor> (std::make_unique<NativeCompressor>());
+    std::unique_ptr<juce::AudioProcessor> p;
+    switch (which)
+    {
+        case 1:  p = std::make_unique<NativeCompressor>(); break;
+        case 2:  p = std::make_unique<NativeReverb>();     break;
+        case 3:  p = std::make_unique<NativeDelay>();      break;
+        case 4:  p = std::make_unique<NativeLimiter>();    break;
+        case 5:  p = std::make_unique<NativeGate>();       break;
+        default: p = std::make_unique<NativeEQ>();         break;
+    }
     addProcessorToTrack (trackId, std::move (p));
 }
 
@@ -561,6 +568,10 @@ juce::var AudioEngine::saveTrackFx (int trackId)
         int which = -1; juce::String descXml;
         if      (dynamic_cast<NativeEQ*> (proc))         which = 0;
         else if (dynamic_cast<NativeCompressor*> (proc)) which = 1;
+        else if (dynamic_cast<NativeReverb*> (proc))     which = 2;
+        else if (dynamic_cast<NativeDelay*> (proc))      which = 3;
+        else if (dynamic_cast<NativeLimiter*> (proc))    which = 4;
+        else if (dynamic_cast<NativeGate*> (proc))       which = 5;
         else if (auto* inst = dynamic_cast<juce::AudioPluginInstance*> (proc))
         { if (auto xml = inst->getPluginDescription().createXml()) descXml = xml->toString(); }
         else continue;   // unknown processor type -> skip

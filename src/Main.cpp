@@ -2153,6 +2153,10 @@ private:
         juce::PopupMenu insert;
         insert.addItem (2001, "EQ (Layback)");
         insert.addItem (2002, "Compressor (Layback)");
+        insert.addItem (2003, "Reverb (Layback)");
+        insert.addItem (2004, "Delay (Layback)");
+        insert.addItem (2005, "Limiter (Layback)");
+        insert.addItem (2006, "Gate (Layback)");
         insert.addSeparator();
 
         juce::PopupMenu hosted;
@@ -2199,8 +2203,7 @@ private:
             else if (r == 8)    splitTrackIntoStems (g, t, false);
             else if (r == 5)    startPluginScan();
             else if (r == 6)    openPluginListWindow();
-            else if (r == 2001) { audioEngine.addNativeEffect (engineId, 0); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
-            else if (r == 2002) { audioEngine.addNativeEffect (engineId, 1); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
+            else if (r >= 2001 && r <= 2006) { audioEngine.addNativeEffect (engineId, r - 2001); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
             else if (r >= 3000 && r < 4000)
             {
                 const auto it = pluginMenuMap.find (r);
