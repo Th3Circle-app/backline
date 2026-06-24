@@ -653,6 +653,31 @@ void TimelineComponent::paint (juce::Graphics& g)
         g.fillRect (lx1 - 2, 0, 4, rulerHeight);
     }
 
+    if (showAutomation)   // volume-automation overlay (amber line + breakpoints) on the active group's audio rows
+    {
+        const juce::Colour autoCol (0xffffc04d);
+        for (const auto& row : rows)
+            if (row.kind == Row::Audio && row.group == activeGroup)
+            {
+                const auto* t = (*groups)[(size_t) row.group]->tracks[(size_t) row.track].get();
+                const auto& pts = t->volumeAuto;
+                g.setColour (autoCol);
+                if (pts.empty())
+                {
+                    const float yy = autoY (row.y, t->volume);
+                    g.drawLine ((float) headerW, yy, (float) w, yy, 1.4f);
+                }
+                else
+                {
+                    float px = (float) headerW, py = autoY (row.y, pts.front().value);
+                    for (const auto& p : pts) { const float x = (float) xForTime (p.time), y = autoY (row.y, p.value); g.drawLine (px, py, x, y, 1.4f); px = x; py = y; }
+                    g.drawLine (px, py, (float) w, py, 1.4f);
+                    for (const auto& p : pts) { const float x = (float) xForTime (p.time), y = autoY (row.y, p.value);
+                        g.setColour (juce::Colours::white); g.fillRect (x - 3.0f, y - 3.0f, 6.0f, 6.0f); g.setColour (autoCol); }
+                }
+            }
+    }
+
     if (tl > 0.0)
     {
         const int px = (int) xForTime (playhead);
@@ -899,6 +924,36 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
             return;
         }
 
+        if (showAutomation)   // automation mode: click adds/moves a breakpoint, double-click deletes
+        {
+            const auto* at = (*groups)[(size_t) hit->group]->tracks[(size_t) hit->track].get();
+            dragAuto = at->volumeAuto;
+            dragAutoGroup = hit->group; dragAutoTrack = hit->track; dragAutoRowY = hit->y;
+            int near = -1;
+            for (int i = 0; i < (int) dragAuto.size(); ++i)
+            {
+                const float x = (float) xForTime (dragAuto[(size_t) i].time), y = autoY (hit->y, dragAuto[(size_t) i].value);
+                if (std::abs (x - (float) e.x) <= 6.0f && std::abs (y - (float) e.y) <= 6.0f) { near = i; break; }
+            }
+            if (near >= 0 && e.getNumberOfClicks() >= 2)   // double-click a point -> delete
+            {
+                dragAuto.erase (dragAuto.begin() + near);
+                if (onAutoEdit) onAutoEdit (dragAutoGroup, dragAutoTrack, dragAuto);
+                dragMode = Drag::None; repaint(); return;
+            }
+            if (near < 0)                                   // empty spot -> add a point and grab it
+            {
+                AutoPoint np { juce::jmax (0.0, timeForX ((double) e.x)), autoValFromY (hit->y, (float) e.y) };
+                dragAuto.push_back (np);
+                std::sort (dragAuto.begin(), dragAuto.end(), [] (const AutoPoint& a, const AutoPoint& b) { return a.time < b.time; });
+                for (int i = 0; i < (int) dragAuto.size(); ++i)
+                    if (std::abs (dragAuto[(size_t) i].time - np.time) < 1.0e-9) { near = i; break; }
+            }
+            dragMode = Drag::AutoPt; dragAutoIdx = near;
+            if (onAutoEdit) onAutoEdit (dragAutoGroup, dragAutoTrack, dragAuto);
+            repaint(); return;
+        }
+
         const auto* t = (*groups)[(size_t) hit->group]->tracks[(size_t) hit->track].get();
         int hitClip = -1;
         for (int j = (int) t->clips.size() - 1; j >= 0; --j)
@@ -967,6 +1022,20 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
         const float p = juce::jlimit (-1.0f, 1.0f, dragStartPan + (float) (e.x - dragStartX) * 0.012f);   // horizontal drag = pan
         if (onTrackPan) onTrackPan (dragGroup, dragTrack, p);
         repaint();
+        return;
+    }
+
+    if (dragMode == Drag::AutoPt)
+    {
+        if (dragAutoIdx >= 0 && dragAutoIdx < (int) dragAuto.size())
+        {
+            const double lo = (dragAutoIdx > 0) ? dragAuto[(size_t) dragAutoIdx - 1].time + 1.0e-3 : 0.0;
+            const double hi = (dragAutoIdx < (int) dragAuto.size() - 1) ? dragAuto[(size_t) dragAutoIdx + 1].time - 1.0e-3 : 1.0e12;
+            dragAuto[(size_t) dragAutoIdx].time  = juce::jlimit (lo, hi, timeForX ((double) e.x));
+            dragAuto[(size_t) dragAutoIdx].value = autoValFromY (dragAutoRowY, (float) e.y);
+            if (onAutoEdit) onAutoEdit (dragAutoGroup, dragAutoTrack, dragAuto);
+            repaint();
+        }
         return;
     }
 

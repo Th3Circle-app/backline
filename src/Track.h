@@ -6,6 +6,14 @@
 #include "Clip.h"
 
 //==============================================================================
+/** One volume-automation breakpoint: a linear gain value at a timeline position. */
+struct AutoPoint
+{
+    double time  = 0.0;    // timeline position (seconds)
+    float  value = 1.0f;   // linear gain (0 .. ~1.4), matches the fader range
+};
+
+//==============================================================================
 /** One audio track in the UI model: a named imported song, its segments (clips),
     a waveform thumbnail, and mute/solo state. Owned by the controller; the engine
     plays it by id. */
@@ -22,6 +30,8 @@ struct AudioTrack
     float volume = 1.0f;               // channel fader, linear (0 .. ~1.4)
     float pan    = 0.0f;               // -1 = hard left .. +1 = hard right
     std::vector<double> beatMarkers;   // onset times within the source (seconds)
+    std::vector<AutoPoint> volumeAuto;   // volume automation breakpoints (sorted by time)
+    bool  automationOn = false;        // read the volume envelope instead of the static fader
     std::unique_ptr<juce::AudioThumbnail> thumb;
 };
 

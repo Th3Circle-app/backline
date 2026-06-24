@@ -32,6 +32,8 @@ public:
     void clearTracks();
 
     void setTrackClips (int trackId, const std::vector<AudioClip>& clips);
+    /** Push a track's volume automation envelope (time, linear-gain) + whether to read it. */
+    void setTrackAutomation (int trackId, const std::vector<std::pair<double, float>>& env, bool on);
     void setTrackGain  (int trackId, float gain);   // post-fader/mute gain (Main folds in track volume)
     void setTrackPan   (int trackId, float pan);    // -1..+1
     void  setMasterGain (float g);
@@ -93,6 +95,8 @@ private:
         std::atomic<float>       pan  { 0.0f };
         std::atomic<float>       peak { 0.0f };   // post-fader peak of the last block (for the meter)
         std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
+        std::vector<std::pair<double, float>> autoEnv;   // volume envelope (time, gain), sorted; read under lock
+        std::atomic<bool>        autoOn { false };        // use the envelope instead of the static gain
     };
 
     class Mixer : public juce::PositionableAudioSource

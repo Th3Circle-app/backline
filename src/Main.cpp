@@ -38,7 +38,7 @@ struct EditSnapshot
 
 namespace LSCmd { enum { TogglePlay = 0x6001, Split, DeleteClip, ToggleLoop, ToggleSnap, NudgeLeft, NudgeRight, Undo, Redo,
                           AddMarker, PrevMarker, NextMarker, ZoomFit, GoToTimecode,
-                          CopyClip, PasteClip, DuplicateClip }; }
+                          CopyClip, PasteClip, DuplicateClip, ToggleAutomation }; }
 
 //==============================================================================
 /** A floating window that hosts one effect's editor (native generic UI or the
@@ -255,6 +255,12 @@ public:
         timeline.onGroupMenu     = [this] (int g) { showGroupMenu (g); };
         timeline.onZoomChanged   = [this] { updateTimelineSize(); };
         timeline.onMarkerRename  = [this] (int i) { renameMarker (i); };
+        timeline.onAutoEdit      = [this] (int g, int t, std::vector<AutoPoint> pts)
+        {
+            if (! validTrack (g, t)) return;
+            groups[(size_t) g]->tracks[(size_t) t]->volumeAuto = std::move (pts);
+            pushTrackAutomation (g, t);
+        };
         timeline.setGroups (&groups);
         timelineViewport.setViewedComponent (&timeline, false);
         timelineViewport.setScrollBarsShown (true, true);   // vertical + horizontal (fixed-zoom scroll)
@@ -1258,7 +1264,7 @@ private:
         const juce::CommandID ids[] = { LSCmd::TogglePlay, LSCmd::Split, LSCmd::DeleteClip, LSCmd::ToggleLoop,
                                         LSCmd::ToggleSnap, LSCmd::NudgeLeft, LSCmd::NudgeRight, LSCmd::Undo, LSCmd::Redo,
                                         LSCmd::AddMarker, LSCmd::PrevMarker, LSCmd::NextMarker, LSCmd::ZoomFit, LSCmd::GoToTimecode,
-                                        LSCmd::CopyClip, LSCmd::PasteClip, LSCmd::DuplicateClip };
+                                        LSCmd::CopyClip, LSCmd::PasteClip, LSCmd::DuplicateClip, LSCmd::ToggleAutomation };
         c.addArray (ids, juce::numElementsInArray (ids));
     }
 
@@ -1283,6 +1289,7 @@ private:
             case LSCmd::CopyClip:   info.setInfo ("Copy clip", "Copy the selected clip", "Edit", 0); break;
             case LSCmd::PasteClip:  info.setInfo ("Paste clip", "Paste the copied clip at the playhead", "Edit", 0); break;
             case LSCmd::DuplicateClip: info.setInfo ("Duplicate clip", "Duplicate the selected clip", "Edit", 0); break;
+            case LSCmd::ToggleAutomation: info.setInfo ("Show automation", "Show/edit volume automation envelopes", "View", 0); info.setTicked (automationVisible); break;
             default: break;
         }
         info.setActive (true);
@@ -1313,6 +1320,7 @@ private:
             case LSCmd::CopyClip:      copySelectedClip(); return true;
             case LSCmd::PasteClip:     pasteClipAtPlayhead(); return true;
             case LSCmd::DuplicateClip: duplicateSelectedClip(); return true;
+            case LSCmd::ToggleAutomation: toggleAutomation(); return true;
             default: return false;
         }
     }
@@ -1324,6 +1332,28 @@ private:
         AudioClip c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
         c.timelineStart = juce::jmax (0.0, c.timelineStart + delta);
         clipChanged (selGroup, selTrack, selClip, c);
+    }
+
+    //== Volume automation ==
+    void pushTrackAutomation (int g, int t)   // model envelope -> engine
+    {
+        if (! validTrack (g, t)) return;
+        auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
+        std::vector<std::pair<double, float>> env;
+        env.reserve (tr->volumeAuto.size());
+        for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });
+        audioEngine.setTrackAutomation (tr->engineId, env, tr->automationOn);
+    }
+    void toggleAutomation()
+    {
+        automationVisible = ! automationVisible;
+        timeline.setAutomationMode (automationVisible);
+        if (validGroup (activeGroup))
+            for (int t = 0; t < (int) groups[(size_t) activeGroup]->tracks.size(); ++t)
+            { groups[(size_t) activeGroup]->tracks[(size_t) t]->automationOn = automationVisible; pushTrackAutomation (activeGroup, t); }
+        titleLabel.setText (automationVisible ? "Automation on - drag on a track to draw volume; double-click a point to delete"
+                                              : "Automation off", juce::dontSendNotification);
+        timeline.repaint();
     }
 
     //== Markers ==
@@ -1454,6 +1484,7 @@ private:
         add (LSCmd::DuplicateClip, "command + D");
         add (LSCmd::ZoomFit,       "Z");
         add (LSCmd::GoToTimecode,  "command + G");
+        add (LSCmd::ToggleAutomation, "A");
         switch (p)
         {
             case KeyProfile::Logic:    add (LSCmd::Split, "command + T"); add (LSCmd::ToggleLoop, "C");                   add (LSCmd::ToggleSnap, "command + shift + S"); break;
@@ -1680,6 +1711,7 @@ private:
             m.addItem (9060, videoWindowOpen ? "Hide Video Window" : "Show Video Window");
             m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
             m.addCommandItem (&commandManager, LSCmd::ZoomFit);
+            m.addCommandItem (&commandManager, LSCmd::ToggleAutomation);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addCommandItem (&commandManager, LSCmd::ToggleLoop);
@@ -2358,6 +2390,10 @@ private:
                         to->setProperty ("pan", t->pan);
                         to->setProperty ("recordArm", t->recordArm);
                         if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
+                        juce::var aarr;
+                        for (auto& p : t->volumeAuto) { auto* po = new juce::DynamicObject(); po->setProperty ("t", p.time); po->setProperty ("v", p.value); aarr.append (juce::var (po)); }
+                        to->setProperty ("auto", aarr);
+                        to->setProperty ("autoOn", t->automationOn);
                         to->setProperty ("beats", doublesToVar (t->beatMarkers));
 
                         juce::var carr;
@@ -2475,6 +2511,9 @@ private:
                         tr->volume       = (float) tv.getProperty ("volume", 1.0);
                         tr->pan          = (float) tv.getProperty ("pan", 0.0);
                         tr->recordArm    = (bool)  tv.getProperty ("recordArm", false);
+                        tr->automationOn = (bool)  tv.getProperty ("autoOn", false);
+                        if (auto* aa = tv["auto"].getArray())
+                            for (auto& av : *aa) tr->volumeAuto.push_back ({ (double) av.getProperty ("t", 0.0), (float) av.getProperty ("v", 1.0) });
                         tr->beatMarkers  = varToDoubles (tv["beats"]);
                         if (auto* carr = tv["clips"].getArray())
                             for (auto& cv : *carr)
@@ -2493,6 +2532,8 @@ private:
                         {
                             audioEngine.setTrackPan (id, tr->pan);   // restore pan (volume is applied via applyMixGains)
                             audioEngine.restoreTrackFx (id, tv["fx"]);   // recreate EQ/Comp + hosted plugins with their state
+                            { std::vector<std::pair<double, float>> env; for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });
+                              audioEngine.setTrackAutomation (id, env, tr->automationOn); }
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
                             tr->thumb->setSource (new juce::FileInputSource (file));
@@ -2518,6 +2559,13 @@ private:
             activateGroup (juce::jlimit (0, (int) groups.size() - 1, ag < 0 ? 0 : ag));
         }
         timeline.setLoop (loopEnabled, loopStart, loopEnd);
+
+        automationVisible = false;   // show the automation overlay if any active-group track has it on
+        if (validGroup (activeGroup))
+            for (auto& tr : groups[(size_t) activeGroup]->tracks)
+                if (tr->automationOn) { automationVisible = true; break; }
+        timeline.setAutomationMode (automationVisible);
+
         resized(); timeline.repaint();
         if (missingMedia > 0)
             titleLabel.setText ("Opened with " + juce::String (missingMedia) + " missing media file(s): " + baseDir.getFileName(), juce::dontSendNotification);
@@ -2647,6 +2695,7 @@ private:
     int  ptEditMode = 1;      // Pro Tools edit mode: 0 Shuffle, 1 Slip, 2 Spot, 3 Grid
     AudioClip clipboardClip;  // copy/paste clipboard
     bool      hasClipboard = false;
+    bool      automationVisible = false;   // volume-automation overlay/read is on
 
     MixerView mixerView;
     bool      mixerVisible = false;

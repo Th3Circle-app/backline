@@ -33,6 +33,7 @@ public:
     enum class EditTool { Smart, Trim, Grab, Scrub, Zoom };   // Pro Tools-style edit tools
     void setEditTool (EditTool t) { editTool = t; }
     void setShuffle (bool b) { shuffle = b; }                 // Shuffle edit mode: moves snap to adjacent clip edges
+    void setAutomationMode (bool b) { showAutomation = b; repaint(); }   // show/edit volume envelopes
     int  contentHeight() const;   // total stacked height of all rows (for a scroll viewport)
     int  contentWidth() const;    // total pixel width at the current zoom (for a scroll viewport)
     void setViewportWidth (int w);// visible content width of the scroll viewport (for fit/zoom)
@@ -60,6 +61,7 @@ public:
     std::function<void (bool, double, double)>      onLoopChanged;
     std::function<void()>                           onZoomChanged;   // zoom changed -> parent should resize the timeline
     std::function<void (int)>                       onMarkerRename;  // double-clicked a ruler marker (index)
+    std::function<void (int, int, std::vector<AutoPoint>)> onAutoEdit;   // group, track, new volume envelope
     std::function<void (double)>                    onLoopMenu;      // right-click lane: timeline time (seconds)
     std::function<void (int, int)>                  onTrackMenu;     // right-click an audio track header (group, track)
     std::function<void (int)>                       onGroupMenu;     // right-click a video header (group)
@@ -73,7 +75,11 @@ public:
 
 private:
     void refitZoom();   // set the fixed zoom so current content fits the visible width
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain };
+    float autoY (int rowY, float v) const          // y for an envelope value (0..1.4) within an audio row
+    { const float pad = 5.0f, hh = (float) rowHeight - 2.0f * pad; return (float) rowY + (float) rowHeight - pad - juce::jlimit (0.0f, 1.0f, v / 1.4f) * hh; }
+    float autoValFromY (int rowY, float y) const
+    { const float pad = 5.0f, hh = juce::jmax (1.0f, (float) rowHeight - 2.0f * pad); return juce::jlimit (0.0f, 1.4f, ((float) rowY + (float) rowHeight - pad - y) / hh * 1.4f); }
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain, AutoPt };
     static constexpr float kClipGainRange = 18.0f;   // +/- dB mapped across the clip height
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
@@ -124,6 +130,9 @@ private:
     int    viewportW = 0;   // visible content width of the scroll viewport
     EditTool editTool = EditTool::Smart;   // active edit tool (PT skin); Smart = zone-based default
     bool     shuffle  = false;             // Shuffle edit mode (butt clips against neighbours)
+    bool     showAutomation = false;       // volume-automation overlay + edit mode
+    std::vector<AutoPoint> dragAuto;       // working copy of the envelope being edited
+    int      dragAutoGroup = -1, dragAutoTrack = -1, dragAutoIdx = -1, dragAutoRowY = 0;
     double   snapClipToEdges (double ts, double dur) const;   // snap a moved clip to nearby clip boundaries
 
     int                  headerW     = 184;   // widened to 280 for Logic-style headers

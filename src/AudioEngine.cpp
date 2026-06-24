@@ -3,6 +3,23 @@
 #include "NativeEffects.h"
 #include <cmath>
 
+// Linear-interpolated value of a (time, gain) envelope at time t (clamped to the ends).
+static inline float envelopeAt (const std::vector<std::pair<double, float>>& pts, double t) noexcept
+{
+    if (pts.empty())               return 1.0f;
+    if (t <= pts.front().first)    return pts.front().second;
+    if (t >= pts.back().first)     return pts.back().second;
+    for (size_t i = 1; i < pts.size(); ++i)
+        if (t <= pts[i].first)
+        {
+            const double t0 = pts[i - 1].first, t1 = pts[i].first;
+            const float  v0 = pts[i - 1].second, v1 = pts[i].second;
+            const float  a  = (float) ((t - t0) / juce::jmax (1.0e-9, t1 - t0));
+            return v0 + (v1 - v0) * a;
+        }
+    return pts.back().second;
+}
+
 // Fade curve shapes applied to the normalized 0..1 fade fraction.
 static inline float fadeShape (float x, int s) noexcept
 {
@@ -68,7 +85,9 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
     for (auto& tptr : tracks)
     {
         auto* t = tptr.get();
-        const float g = t->gain.load();
+        float g = t->gain.load();
+        if (t->autoOn.load() && ! t->autoEnv.empty())               // read the volume envelope at this block's start
+            g = envelopeAt (t->autoEnv, (double) blockStart / rt);
         const bool  hasFx = ! t->chain.empty();
         if (g <= 0.0001f && ! hasFx) continue;
 
@@ -318,6 +337,15 @@ void AudioEngine::setTrackClips (int trackId, const std::vector<AudioClip>& clip
         mixer.recomputeLength();
     }
     // 'staged' (now the old vector) frees here, outside the lock
+}
+
+void AudioEngine::setTrackAutomation (int trackId, const std::vector<std::pair<double, float>>& env, bool on)
+{
+    std::vector<std::pair<double, float>> staged (env);   // copy outside the audio lock
+    {
+        const juce::ScopedLock sl (mixer.lock);
+        if (auto* t = findTrack (trackId)) { std::swap (t->autoEnv, staged); t->autoOn.store (on); }
+    }
 }
 
 void AudioEngine::setTrackGain (int trackId, float gain)
