@@ -351,6 +351,8 @@ void AudioEngine::setTrackClips (int trackId, const std::vector<AudioClip>& clip
     // 'staged' (now the old vector) frees here, outside the lock
 }
 
+double AudioEngine::sampleRate() const { return mixer.rate.load() > 0.0 ? mixer.rate.load() : 44100.0; }
+
 float AudioEngine::clipPeak (int trackId, double sourceIn, double duration)
 {
     const juce::ScopedLock sl (mixer.lock);
@@ -410,6 +412,51 @@ std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeStretchedClip (int tr
     }
     if (written <= 0) return nullptr;
     out->setSize (2, written, true, true, true);
+    return out;
+}
+
+std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeSpeedFaded (int trackId, double sourceIn, double srcSeconds, double speedInSec, double speedOutSec)
+{
+    juce::AudioBuffer<float> region;
+    double rt = 44100.0;
+    {
+        const juce::ScopedLock sl (mixer.lock);
+        auto* t = findTrack (trackId);
+        if (t == nullptr || t->audio.getNumSamples() == 0) return nullptr;
+        rt = mixer.rate.load();
+        const int start = juce::jlimit (0, t->audio.getNumSamples() - 1, (int) (sourceIn * rt));
+        const int len   = juce::jmin (t->audio.getNumSamples() - start, juce::jmax (1, (int) (srcSeconds * rt)));
+        region.setSize (2, len);
+        for (int ch = 0; ch < 2; ++ch)
+            region.copyFrom (ch, 0, t->audio, juce::jmin (ch, t->audio.getNumChannels() - 1), start, len);
+    }
+    const int N = region.getNumSamples();
+    if (N <= 2) return nullptr;
+
+    const double inS  = juce::jlimit (0.0, srcSeconds * 0.9, speedInSec)  * rt;   // head ramp (source samples)
+    const double outS = juce::jlimit (0.0, srcSeconds * 0.9, speedOutSec) * rt;   // tail ramp
+    const double rMin = 0.35;                                                     // slowest playback rate (tape stop feel)
+    auto rateAt = [&] (double sp) -> double
+    {
+        double r = 1.0;
+        if (inS  > 0.0 && sp < inS)         r = juce::jmin (r, rMin + (1.0 - rMin) * (sp / inS));            // spin up
+        if (outS > 0.0 && sp > (double) N - outS) r = juce::jmin (r, rMin + (1.0 - rMin) * juce::jlimit (0.0, 1.0, ((double) N - sp) / outS));  // slow down
+        return juce::jmax (0.05, r);
+    };
+
+    const int cap = (int) ((double) N / rMin) + 8;
+    auto out = std::make_shared<juce::AudioBuffer<float>> (2, cap);
+    out->clear();
+    double sp = 0.0; int w = 0;
+    while (sp < (double) (N - 1) && w < cap)
+    {
+        const int i0 = (int) sp; const int i1 = juce::jmin (N - 1, i0 + 1); const float fr = (float) (sp - i0);
+        out->setSample (0, w, region.getSample (0, i0) * (1.0f - fr) + region.getSample (0, i1) * fr);
+        out->setSample (1, w, region.getSample (1, i0) * (1.0f - fr) + region.getSample (1, i1) * fr);
+        ++w; sp += rateAt (sp);
+    }
+    if (w <= 0) return nullptr;
+    out->setSize (2, w, true, true, true);
     return out;
 }
 

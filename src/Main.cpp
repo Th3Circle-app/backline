@@ -1051,6 +1051,8 @@ private:
         m.addSeparator();
         m.addItem (8, "Normalize");
         m.addItem (9, "Time-Stretch...");
+        m.addItem (30, "Speed Fade In (spin up)");
+        m.addItem (31, "Speed Fade Out (slow down)");
         m.addItem (6, "Reset Clip Gain (0 dB)");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
@@ -1063,6 +1065,8 @@ private:
                 else if (r == 7) crossfadeWithPrevious();
                 else if (r == 8) normalizeSelectedClip();
                 else if (r == 9) timeStretchSelectedClip();
+                else if (r == 30) applySpeedFade (true, false);
+                else if (r == 31) applySpeedFade (false, true);
                 else if (r == 6 && validClip (g, t, c))
                 {
                     pushUndo();
@@ -1163,7 +1167,8 @@ private:
         auto baked = audioEngine.makeStretchedClip (tr->engineId, c.sourceIn, srcSeconds, ratio);
         if (baked == nullptr) { titleLabel.setText ("Time-stretch failed", juce::dontSendNotification); return; }
         pushUndo();
-        c.stretched = baked; c.stretchRatio = ratio; c.duration = srcSeconds * ratio;
+        c.stretched = baked; c.stretchRatio = ratio; c.speedFadeIn = 0.0; c.speedFadeOut = 0.0;
+        c.bakedSrcSeconds = srcSeconds; c.duration = srcSeconds * ratio;
         clipChanged (selGroup, selTrack, selClip, c);
         updateTimelineSize();
         titleLabel.setText ("Stretched to " + juce::String (c.duration, 2) + " s (" + juce::String ((int) (ratio * 100.0)) + "%)", juce::dontSendNotification);
@@ -1175,10 +1180,29 @@ private:
         if (c.stretchRatio == 1.0 && c.stretched == nullptr) return;
         const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
         pushUndo();
-        c.stretched.reset(); c.stretchRatio = 1.0; c.duration = srcSeconds;
+        c.stretched.reset(); c.stretchRatio = 1.0; c.speedFadeIn = 0.0; c.speedFadeOut = 0.0; c.bakedSrcSeconds = 0.0; c.duration = srcSeconds;
         clipChanged (selGroup, selTrack, selClip, c);
         updateTimelineSize();
-        titleLabel.setText ("Stretch reset", juce::dontSendNotification);
+        titleLabel.setText ("Stretch / speed reset", juce::dontSendNotification);
+    }
+
+    // Tape-style speed fade: spin-up at the head and/or slow-down at the tail (pitch + tempo ramp).
+    void applySpeedFade (bool head, bool tail)
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip for a speed fade", juce::dontSendNotification); return; }
+        auto* tr = groups[(size_t) selGroup]->tracks[(size_t) selTrack].get();
+        AudioClip c = tr->clips[(size_t) selClip];
+        const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);   // back to the source length first
+        const double useIn  = head ? 0.75 : c.speedFadeIn;
+        const double useOut = tail ? 0.75 : c.speedFadeOut;
+        auto baked = audioEngine.makeSpeedFaded (tr->engineId, c.sourceIn, srcSeconds, useIn, useOut);
+        if (baked == nullptr) { titleLabel.setText ("Speed fade failed", juce::dontSendNotification); return; }
+        pushUndo();
+        c.stretched = baked; c.stretchRatio = 1.0; c.speedFadeIn = useIn; c.speedFadeOut = useOut;
+        c.bakedSrcSeconds = srcSeconds; c.duration = baked->getNumSamples() / audioEngine.sampleRate();
+        clipChanged (selGroup, selTrack, selClip, c);
+        updateTimelineSize();
+        titleLabel.setText (juce::String (head ? "Speed fade-in (spin up) " : "") + (tail ? "speed fade-out (slow down)" : ""), juce::dontSendNotification);
     }
 
     void openAddVideo()
@@ -2513,6 +2537,9 @@ private:
                             co->setProperty ("fadeOutShape", c.fadeOutShape);
                             co->setProperty ("gainDb", c.gainDb);
                             co->setProperty ("stretch", c.stretchRatio);
+                            co->setProperty ("spdIn", c.speedFadeIn);
+                            co->setProperty ("spdOut", c.speedFadeOut);
+                            co->setProperty ("bakeSrc", c.bakedSrcSeconds);
                             carr.append (juce::var (co));
                         }
                         to->setProperty ("clips", carr);
@@ -2626,7 +2653,10 @@ private:
                                                        (double) cv.getProperty ("fadeIn", 0.0), (double) cv.getProperty ("fadeOut", 0.0),
                                                        (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0),
                                                        (float) cv.getProperty ("gainDb", 0.0),
-                                                       (double) cv.getProperty ("stretch", 1.0) });
+                                                       (double) cv.getProperty ("stretch", 1.0),
+                                                       (double) cv.getProperty ("spdIn", 0.0),
+                                                       (double) cv.getProperty ("spdOut", 0.0),
+                                                       (double) cv.getProperty ("bakeSrc", 0.0) });
                         if (tr->clips.empty() && tr->sourceLength > 0.0)
                             tr->clips.push_back ({ 0.0, 0.0, tr->sourceLength });   // never silently empty
 
@@ -2640,9 +2670,15 @@ private:
                             audioEngine.restoreTrackFx (id, tv["fx"]);   // recreate EQ/Comp + hosted plugins with their state
                             { std::vector<std::pair<double, float>> env; for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });
                               audioEngine.setTrackAutomation (id, env, tr->automationOn); }
-                            for (auto& cc : tr->clips)   // re-bake time-stretched clips (baked audio isn't stored)
-                                if (cc.stretchRatio != 1.0)
-                                    cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, cc.duration / juce::jmax (0.01, cc.stretchRatio), cc.stretchRatio);
+                            for (auto& cc : tr->clips)   // re-bake stretched / speed-faded clips (baked audio isn't stored)
+                            {
+                                const double srcSec = cc.bakedSrcSeconds > 0.0 ? cc.bakedSrcSeconds
+                                                                               : cc.duration / juce::jmax (0.01, cc.stretchRatio);
+                                if (cc.speedFadeIn > 0.0 || cc.speedFadeOut > 0.0)
+                                    cc.stretched = audioEngine.makeSpeedFaded (id, cc.sourceIn, srcSec, cc.speedFadeIn, cc.speedFadeOut);
+                                else if (cc.stretchRatio != 1.0)
+                                    cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio);
+                            }
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
                             tr->thumb->setSource (new juce::FileInputSource (file));

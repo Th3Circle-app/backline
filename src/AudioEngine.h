@@ -83,9 +83,12 @@ public:
     bool renderMixToFile (const juce::File& outWav, double lengthSeconds);
     /** Peak magnitude (0..1) of a clip's source region, for Normalize. */
     float clipPeak (int trackId, double sourceIn, double duration);
+    double sampleRate() const;   // current device sample rate (for length<->samples math)
     /** Bake a pitch-preserved time-stretch of a clip's source region (ratio = output/source length).
         Returns a stereo buffer at the device rate to play in place of the source; nullptr on failure. */
     std::shared_ptr<juce::AudioBuffer<float>> makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio);
+    /** Bake a tape-style speed fade (varispeed ramp at head/tail) of a clip's source region. */
+    std::shared_ptr<juce::AudioBuffer<float>> makeSpeedFaded (int trackId, double sourceIn, double srcSeconds, double speedInSec, double speedOutSec);
 
     /** Detects onset/beat times (seconds, in the source) of a loaded track. */
     std::vector<double> computeTrackOnsets (int trackId);
