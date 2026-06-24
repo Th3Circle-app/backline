@@ -829,13 +829,34 @@ private:
         juce::PopupMenu m;
         m.addItem (1, "Split here");
         m.addItem (2, "Delete clip");
+        m.addSeparator();
+        m.addItem (3, "Fade In (1 s)");
+        m.addItem (4, "Fade Out (1 s)");
+        m.addItem (5, "Remove Fades");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this, g, t, c, tm] (int r)
             {
                 if      (r == 1) splitTrackClip (g, t, tm);
                 else if (r == 2) deleteClip (g, t, c);
+                else if (r == 3) applyFade (0);
+                else if (r == 4) applyFade (1);
+                else if (r == 5) applyFade (2);
                 restoreKeyFocus();
             });
+    }
+
+    // Fade the selected clip. mode: 0 = fade in, 1 = fade out, 2 = remove both.
+    void applyFade (int mode)
+    {
+        if (! validClip (selGroup, selTrack, selClip)) return;
+        pushUndo();
+        AudioClip nc = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        const double f = juce::jmax (0.05, juce::jmin (1.0, nc.duration * 0.5));
+        if      (mode == 0) nc.fadeIn  = f;
+        else if (mode == 1) nc.fadeOut = f;
+        else                { nc.fadeIn = 0.0; nc.fadeOut = 0.0; }
+        clipChanged (selGroup, selTrack, selClip, nc);
+        timeline.repaint();
     }
 
     void openAddVideo()
@@ -1204,6 +1225,11 @@ private:
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::Split);
             m.addCommandItem (&commandManager, LSCmd::DeleteClip);
+            m.addSeparator();
+            const bool hasClip = validClip (selGroup, selTrack, selClip);
+            m.addItem (9070, "Fade In",      hasClip);
+            m.addItem (9071, "Fade Out",     hasClip);
+            m.addItem (9072, "Remove Fades", hasClip);
         }
         else if (name == "Track")
         {
@@ -1301,6 +1327,9 @@ private:
             case 9023: applyKeyProfile (KeyProfile::Ableton);  break;
             case 9030: seekAll (0.0); break;
             case 9040: closeAllPluginWindows(); break;
+            case 9070: applyFade (0); break;
+            case 9071: applyFade (1); break;
+            case 9072: applyFade (2); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9050: toggleMixer(); break;
             default: break;
