@@ -194,8 +194,8 @@ public:
         logicInspector.setEngine (&audioEngine);
         logicInspector.onVolume = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         logicInspector.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); if (mixerVisible) mixerView.syncFromModel(); } };
-        logicInspector.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
-        logicInspector.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onMute   = [this] (int g, int t, bool b)  { setTrackMute (g, t, b); };
+        logicInspector.onSolo   = [this] (int g, int t, bool b)  { setTrackSolo (g, t, b); };
         logicInspector.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         logicInspector.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
         logicInspector.onMasterMute   = [this] (bool b)  { audioEngine.setMasterMute (b); if (mixerVisible) mixerView.syncFromModel(); };
@@ -261,8 +261,8 @@ public:
         timeline.onClipSelected  = [this] (int g, int t, int c) { selGroup = g; selTrack = t; selClip = c; timeline.setSelection (g, t, c); refreshInspector(); };
         timeline.onToggleExpand  = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->expanded = ! groups[(size_t) g]->expanded; resized(); timeline.repaint(); } };
         timeline.onImportTrack   = [this] (int g) { importTrack (g); };
-        timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
-        timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
+        timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) setTrackMute (g, t, ! groups[(size_t) g]->tracks[(size_t) t]->mute); };
+        timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) setTrackSolo (g, t, ! groups[(size_t) g]->tracks[(size_t) t]->solo); };
         timeline.onTrackRecord   = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.recordArm = ! tr.recordArm; timeline.repaint(); } };
         timeline.onTrackVolume   = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         timeline.onTrackPan      = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); refreshInspector(); } };
@@ -295,8 +295,9 @@ public:
         mixerView.setEngine (&audioEngine);
         mixerView.onVolume = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         mixerView.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.pan = p; audioEngine.setTrackPan (tr.engineId, p); } };
-        mixerView.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); } };
-        mixerView.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); } };
+        mixerView.onMute   = [this] (int g, int t, bool b)  { setTrackMute (g, t, b); };
+        mixerView.onSolo   = [this] (int g, int t, bool b)  { setTrackSolo (g, t, b); };
+        mixerView.onGroupChange = [this] (int g, int t, int gid) { if (validTrack (g, t)) groups[(size_t) g]->tracks[(size_t) t]->mixGroup = gid; };
         mixerView.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         mixerView.onSelect = [this] (int g, int t) { selGroup = g; selTrack = t; selClip = -1; timeline.setSelection (g, t, -1); };
         mixerView.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
@@ -989,8 +990,30 @@ private:
             audioEngine.setTrackAutomation (tr->engineId, env, tr->automationOn);
             timeline.repaint();
         }
+        if (tr->mixGroup > 0)   // linked faders: peers in the same mix group follow
+            for (int i = 0; i < (int) groups[(size_t) g]->tracks.size(); ++i)
+                if (i != t && groups[(size_t) g]->tracks[(size_t) i]->mixGroup == tr->mixGroup)
+                { groups[(size_t) g]->tracks[(size_t) i]->volume = v; updateTrackGain (g, i); }
         if (mixerVisible) mixerView.syncFromModel();
         refreshInspector();
+    }
+    void setTrackMute (int g, int t, bool b)
+    {
+        if (! validTrack (g, t)) return;
+        auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
+        tr->mute = b;
+        if (tr->mixGroup > 0) for (auto& pt : groups[(size_t) g]->tracks) if (pt->mixGroup == tr->mixGroup) pt->mute = b;
+        applyMixGains(); timeline.repaint();
+        if (mixerVisible) mixerView.syncFromModel();
+    }
+    void setTrackSolo (int g, int t, bool b)
+    {
+        if (! validTrack (g, t)) return;
+        auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
+        tr->solo = b;
+        if (tr->mixGroup > 0) for (auto& pt : groups[(size_t) g]->tracks) if (pt->mixGroup == tr->mixGroup) pt->solo = b;
+        applyMixGains(); timeline.repaint();
+        if (mixerVisible) mixerView.syncFromModel();
     }
 
     void updateTrackGain (int g, int t)
@@ -2730,6 +2753,7 @@ private:
                 to->setProperty ("volume", t->volume);
                 to->setProperty ("pan", t->pan);
                 to->setProperty ("send", t->send);
+                to->setProperty ("mixGroup", t->mixGroup);
                 to->setProperty ("recordArm", t->recordArm);
                 if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
                 juce::var aarr;
@@ -2983,6 +3007,7 @@ private:
                         tr->volume       = (float) tv.getProperty ("volume", 1.0);
                         tr->pan          = (float) tv.getProperty ("pan", 0.0);
                         tr->send         = (float) tv.getProperty ("send", 0.0);
+                        tr->mixGroup     = (int)   tv.getProperty ("mixGroup", 0);
                         tr->recordArm    = (bool)  tv.getProperty ("recordArm", false);
                         tr->automationOn = (bool)  tv.getProperty ("autoOn", false);
                         if (auto* aa = tv["auto"].getArray())

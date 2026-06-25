@@ -32,8 +32,10 @@ struct ChannelStrip : public juce::Component
     std::function<void (bool)>  onRecordArmToggle;   // track R cell
     std::function<void()>       onBounceClick;       // master Bnc cell
     std::function<void (float)> onSendChange;        // FX-bus send level
+    std::function<void (int)>   onGroupChange;       // mixer link group (cycles 0..4)
     bool  recArmed = false;
     float sendLevel = 0.0f;
+    int   groupId = 0;
 
     explicit ChannelStrip (bool master) : isMaster (master)
     {
@@ -90,6 +92,7 @@ struct ChannelStrip : public juce::Component
         if (! isMaster && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }
         if (isMaster && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
         if (! isMaster && sendsRow.contains (e.getPosition())) { setSendFromX (e.x); return; }              // FX-bus send
+        if (! isMaster && groupRow.contains (e.getPosition())) { groupId = (groupId + 1) % 5; if (onGroupChange) onGroupChange (groupId); repaint(); return; }   // cycle link group
         if (! isMaster && ! riRow.isEmpty())
         {
             auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1);   // R cell = left half
@@ -187,8 +190,19 @@ struct ChannelStrip : public juce::Component
         };
         rowSlot (inRow,     "In 1-2",     skin.text,  true,  false, true);   // routing rows are read-only labels for now
         rowSlot (outputRow, "Stereo Out", skin.text,  false, false, true);
-        rowSlot (groupRow,  "Group",      skin.text,  false, false, true);
         rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false, true);
+
+        if (! groupRow.isEmpty() && ! isMaster)   // mixer link group (click to cycle)
+        {
+            const juce::Colour grpCols[] = { skin.muted, juce::Colour (0xffe0913d), juce::Colour (0xff5aa0d0), juce::Colour (0xff7bbf5a), juce::Colour (0xffd06fb0) };
+            auto rf = groupRow.toFloat().reduced (2.0f, 1.0f);
+            g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (rf, 3.0f);
+            g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+            if (groupId > 0) { g.setColour (grpCols[groupId].withAlpha (0.85f)); g.fillRoundedRectangle (rf.removeFromLeft (5.0f), 2.0f); }
+            g.setColour (groupId > 0 ? skin.text : skin.muted.withAlpha (0.6f));
+            g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+            g.drawText (groupId > 0 ? ("Group " + juce::String (groupId)) : "Group", groupRow.toFloat().withTrimmedLeft (8.0f), juce::Justification::centredLeft, true);
+        }
 
         if (! sendsRow.isEmpty() && ! isMaster)   // FX-bus send level (drag to set)
         {
@@ -283,6 +297,7 @@ public:
     std::function<void (int, int, bool)>  onRecordArm;   // (group, track, armed)
     std::function<void ()>                onBounce;       // master Bnc -> export/bounce
     std::function<void (int, int, float)> onSend;         // (group, track, FX-bus send level)
+    std::function<void (int, int, int)>   onGroupChange;   // (group, track, link-group id)
     std::function<void (float)>           onMasterVolume;
     std::function<void (bool)>            onMasterMute;
 
@@ -389,6 +404,7 @@ private:
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
             s->recArmed = tr->recordArm;
             s->sendLevel = tr->send;
+            s->groupId = tr->mixGroup;
         }
         else
         {
@@ -407,6 +423,7 @@ private:
         s->onRecordArmToggle = [this, g2, t2] (bool b) { if (onRecordArm) onRecordArm (g2, t2, b); };
         s->onBounceClick     = [this] { if (onBounce) onBounce(); };
         s->onSendChange      = [this, g2, t2] (float v) { if (onSend) onSend (g2, t2, v); };
+        s->onGroupChange     = [this, g2, t2] (int gid) { if (onGroupChange) onGroupChange (g2, t2, gid); };
 
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));
