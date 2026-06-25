@@ -176,9 +176,11 @@ private:
         }
         void audioDeviceStopped() override {}
         void audioDeviceIOCallbackWithContext (const float* const* in, int numIn,
-                                               float* const*, int, int n,
+                                               float* const* out, int numOut, int n,
                                                const juce::AudioIODeviceCallbackContext&) override
         {
+            for (int ch = 0; ch < numOut; ++ch)   // CRITICAL: this is a second callback; JUCE sums our output
+                if (out[ch] != nullptr) juce::FloatVectorOperations::clear (out[ch], n);   // contribute silence, not garbage
             if (! active.load()) return;
             int w = writePos.load();
             const int cap = buf.getNumSamples();
