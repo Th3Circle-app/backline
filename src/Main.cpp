@@ -493,7 +493,7 @@ public:
 
         double len = 0.0;
         const int id = audioEngine.addTrack (f, len);
-        if (id < 0) return;
+        if (id < 0) { titleLabel.setText ("Couldn't read \"" + f.getFileName() + "\" - unsupported audio format.", juce::dontSendNotification); return; }
 
         auto tr = std::make_unique<AudioTrack>();
         tr->name         = f.getFileNameWithoutExtension();
@@ -1812,6 +1812,8 @@ private:
             m.addSeparator();
             m.addItem (9005, "Export Video + Audio...");
             m.addItem (9006, "Export Audio (WAV)...");
+            m.addSeparator();
+            m.addItem (9007, "Relink Missing Media...");
         }
         else if (name == "Edit")
         {
@@ -1930,6 +1932,7 @@ private:
             case 9004: openAddVideo();  break;
             case 9005: exportVideo();   break;
             case 9006: exportAudio();   break;
+            case 9007: relinkMissingMedia(); break;
             case 9010: if (activeGroup >= 0) importTrack (activeGroup); break;
             case 9011: insertEffectAndEdit (0); break;
             case 9012: insertEffectAndEdit (1); break;
@@ -2697,6 +2700,57 @@ private:
             else        clearRecovery();
             restoreKeyFocus();
         }), false);
+    }
+
+    //== Relink media that moved since the project was saved ==
+    bool relinkTrack (AudioTrack& t, const juce::File& nf)
+    {
+        double len = 0.0;
+        const int id = audioEngine.addTrack (nf, len);
+        if (id < 0) return false;
+        if (t.engineId >= 0) audioEngine.removeTrack (t.engineId);
+        t.engineId = id; t.file = nf; if (t.sourceLength <= 0.0) t.sourceLength = len;
+        if (t.thumb != nullptr) t.thumb->removeChangeListener (this);
+        t.thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
+        t.thumb->addChangeListener (this);
+        t.thumb->setSource (new juce::FileInputSource (nf));
+        audioEngine.setTrackPan (id, t.pan);
+        std::vector<std::pair<double, float>> env; for (auto& p : t.volumeAuto) env.push_back ({ p.time, p.value });
+        audioEngine.setTrackAutomation (id, env, t.automationOn);
+        for (auto& cc : t.clips)
+        {
+            const double srcSec = cc.bakedSrcSeconds > 0.0 ? cc.bakedSrcSeconds : cc.duration / juce::jmax (0.01, cc.stretchRatio);
+            if      (cc.speedFadeIn > 0.0 || cc.speedFadeOut > 0.0) cc.stretched = audioEngine.makeSpeedFaded   (id, cc.sourceIn, srcSec, cc.speedFadeIn, cc.speedFadeOut);
+            else if (cc.stretchRatio != 1.0)                        cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio);
+        }
+        return true;
+    }
+    void relinkMissingMedia()
+    {
+        bool any = false;
+        for (auto& g : groups) { if (! g->file.existsAsFile()) any = true; for (auto& t : g->tracks) if (! t->file.existsAsFile()) any = true; }
+        if (! any) { titleLabel.setText ("No missing media to relink", juce::dontSendNotification); return; }
+        chooser = std::make_unique<juce::FileChooser> ("Choose a folder that contains the missing media", juce::File ("~/Desktop"), juce::String());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this] (const juce::FileChooser& fc)
+            {
+                restoreKeyFocus();
+                const auto dir = fc.getResult();
+                if (dir == juce::File() || ! dir.isDirectory()) return;
+                const auto found = dir.findChildFiles (juce::File::findFiles, true);
+                auto byName = [&] (const juce::String& nm) -> juce::File
+                { for (auto& f : found) if (f.getFileName().equalsIgnoreCase (nm)) return f; return {}; };
+                int n = 0;
+                for (auto& g : groups)
+                {
+                    if (! g->file.existsAsFile()) { const auto nf = byName (g->file.getFileName()); if (nf != juce::File()) { g->file = nf; ++n; } }
+                    for (auto& t : g->tracks)
+                        if (! t->file.existsAsFile()) { const auto nf = byName (t->file.getFileName()); if (nf != juce::File() && relinkTrack (*t, nf)) ++n; }
+                }
+                if (validGroup (activeGroup)) { video.loadFile (groups[(size_t) activeGroup]->file); activateGroup (activeGroup); }
+                resized(); timeline.repaint();
+                titleLabel.setText (n > 0 ? ("Relinked " + juce::String (n) + " file(s)") : "No matching files found in that folder", juce::dontSendNotification);
+            });
     }
 
     void openProject()
