@@ -36,6 +36,7 @@ public:
 
     double getDurationSeconds() const;
     double getPositionSeconds() const;
+    double getFrameRate() const;   // the loaded clip's frame rate (0 if unknown)
 
     /** Frame-accurate seek (zero tolerance). */
     void setPositionSeconds (double seconds);

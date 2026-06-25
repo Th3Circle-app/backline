@@ -3187,7 +3187,9 @@ private:
         const double inBar = playhead - 2.0 * (double) (bbBar - 1);
         const int bbBeat  = juce::jlimit (1, 4, (int) (inBar / 0.5) + 1);
         logicBar.setPosition (juce::String (bbBar) + "  " + juce::String (bbBeat), formatTime (playhead));
-        const int tcH = (int) (playhead / 3600.0), tcM = ((int) (playhead / 60.0)) % 60, tcS = ((int) playhead) % 60, tcF = ((int) (playhead * 30.0)) % 30;
+        const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;   // frame-accurate to the loaded clip
+        const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
+        const int tcH = (int) (playhead / 3600.0), tcM = ((int) (playhead / 60.0)) % 60, tcS = ((int) playhead) % 60, tcF = ((int) (playhead * fps)) % fpsI;
         ptBar.setPosition (juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF), juce::String (bbBar) + "|" + juce::String (bbBeat));
         audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();

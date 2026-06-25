@@ -15,6 +15,7 @@ struct VideoViewImpl
     AVPlayer*       player      = nil;
     AVPlayerLayer*  playerLayer = nil;
     std::atomic<float> videoPeak { 0.0f };   // last block's peak from the audio tap (for the master meter)
+    double          cachedFps   = 0.0;       // video frame rate (lazily read from the asset)
     std::unique_ptr<juce::NSViewComponent> nsViewComp;
 };
 
@@ -133,6 +134,7 @@ bool VideoView::loadFile (const juce::File& file)
 
     i->player      = player;
     i->playerLayer = layer;
+    i->cachedFps   = 0.0;   // recompute the frame rate for this clip
     return true;
 }
 
@@ -164,6 +166,23 @@ float VideoView::getAudioPeak() const
 {
     auto* i = static_cast<VideoViewImpl*> (impl);
     return i != nullptr ? i->videoPeak.load() : 0.0f;
+}
+
+double VideoView::getFrameRate() const
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i == nullptr) return 0.0;
+    if (i->cachedFps <= 0.0 && i->player != nil && i->player.currentItem != nil)
+    {
+        AVAsset* asset = i->player.currentItem.asset;
+        NSArray<AVAssetTrack*>* vtracks = [asset tracksWithMediaType: AVMediaTypeVideo];
+        if (vtracks.count > 0)
+        {
+            const float fps = vtracks.firstObject.nominalFrameRate;
+            if (fps > 1.0f) i->cachedFps = (double) fps;
+        }
+    }
+    return i->cachedFps;
 }
 
 bool VideoView::isPlaying() const
