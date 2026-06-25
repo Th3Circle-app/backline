@@ -319,6 +319,15 @@ public:
         for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &loopToggle, &snapToggle, &videoButton })
             c->setWantsKeyboardFocus (false);
 
+        openButton  .setTooltip ("Add a video to sync music against");
+        playButton  .setTooltip ("Play / Pause (Space)");
+        loopToggle  .setTooltip ("Loop the cycle region");
+        snapToggle  .setTooltip ("Snap edits to the grid");
+        videoButton .setTooltip ("Show / hide the floating video window");
+        keysButton  .setTooltip ("Switch DAW skin + keymap (Logic / Pro Tools / Ableton / Layback)");
+        exportButton.setTooltip ("Export video+audio, or audio-only WAV");
+        projectButton.setTooltip ("New / Open / Save project");
+
         commandManager.registerAllCommandsForTarget (this);
         addKeyListener (commandManager.getKeyMappings());
         setWantsKeyboardFocus (true);
@@ -3240,6 +3249,7 @@ private:
     VideoView video;
     AudioEngine audioEngine;
     juce::AudioThumbnailCache thumbnailCache { 32 };
+    juce::TooltipWindow tooltipWindow;   // hover hints on the toolbar controls
     std::vector<std::unique_ptr<VideoGroup>> groups;
     TimelineComponent timeline;
     juce::Viewport timelineViewport;
