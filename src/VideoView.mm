@@ -153,6 +153,13 @@ void VideoView::pause()
     }
 }
 
+void VideoView::setRate (double rate)
+{
+    auto* i = static_cast<VideoViewImpl*> (impl);
+    if (i != nullptr && i->player != nil && i->player.rate != 0.0f)   // only nudge while already playing
+        i->player.rate = (float) rate;
+}
+
 float VideoView::getAudioPeak() const
 {
     auto* i = static_cast<VideoViewImpl*> (impl);

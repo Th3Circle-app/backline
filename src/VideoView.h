@@ -31,6 +31,9 @@ public:
     void pause();
     bool isPlaying() const;
 
+    /** Nudge playback rate while playing (for smooth A/V sync chase); ignored if paused. */
+    void setRate (double rate);
+
     double getDurationSeconds() const;
     double getPositionSeconds() const;
 

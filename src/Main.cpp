@@ -2923,9 +2923,9 @@ private:
 
             if (playing && video.isPlaying() && playhead < vdur - 0.05)
             {
-                double d = video.getPositionSeconds() - playhead;
-                if (d < 0) d = -d;
-                if (d > 0.25) video.setPositionSeconds (playhead);
+                const double drift = video.getPositionSeconds() - playhead;          // +ve => video ahead of audio
+                if (std::abs (drift) > 0.35) video.setPositionSeconds (playhead);     // way off (e.g. after a scrub): hard re-lock
+                else                         video.setRate (juce::jlimit (0.90, 1.10, 1.0 - drift * 0.6));   // gentle rate chase -> frame-tight lock, no jumps
             }
 
             if (! isScrubbing) timeline.setPlayhead (playhead);
