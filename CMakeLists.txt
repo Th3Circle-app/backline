@@ -29,6 +29,8 @@ juce_add_gui_app(LaybackStation
     PRODUCT_NAME "Layback Station"
     COMPANY_NAME "Layback"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Layback Station records audio takes from your input device."
     BUNDLE_ID "app.layback.station")
 
 target_sources(LaybackStation PRIVATE

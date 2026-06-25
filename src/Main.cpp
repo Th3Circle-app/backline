@@ -183,7 +183,7 @@ public:
         logicBar.onRewind = [this] { seekAll (0.0); };
         logicBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
         logicBar.onPlay   = [this] { togglePlay(); };
-        logicBar.onRecord = [this] { toggleSelectedRecordArm(); };
+        logicBar.onRecord = [this] { toggleRecord(); };
         logicBar.onCycle  = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
         logicBar.onLibrary = [this] { openPluginListWindow(); };
         logicBar.onMixer   = [this] { toggleMixer(); };
@@ -204,7 +204,7 @@ public:
         ptBar.onRewind = [this] { seekAll (0.0); };
         ptBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
         ptBar.onPlay   = [this] { togglePlay(); };
-        ptBar.onRecord = [this] { toggleSelectedRecordArm(); };
+        ptBar.onRecord = [this] { toggleRecord(); };
         ptBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
         ptBar.onMode   = [this] (int mode) { applyPtEditMode (mode); };
         ptBar.onTool   = [this] (int t)
@@ -1024,6 +1024,50 @@ private:
 
     void pauseAll() { playing = false; audioEngine.stop(); video.pause(); }
     void togglePlay() { if (playing) pauseAll(); else playAll(); }
+
+    //== Recording: capture the input device, drop the take as a new track at the record point ==
+    void toggleRecord()
+    {
+        if (audioEngine.isRecording()) { finishRecording(); return; }
+        if (! audioEngine.hasAudioInput()) { titleLabel.setText ("No audio input device available (check mic permission / input).", juce::dontSendNotification); return; }
+        if (! validGroup (activeGroup)) { titleLabel.setText ("Add a video first, then record into it.", juce::dontSendNotification); return; }
+        recordStartTime = playhead;
+        recordTicks = 0;
+        audioEngine.startRecording();
+        if (! playing) playAll();        // roll so you hear the mix while recording
+        titleLabel.setText ("Recording...", juce::dontSendNotification);
+    }
+    void finishRecording()
+    {
+        auto take = audioEngine.stopRecording();
+        const double sr = audioEngine.getDeviceSampleRate();
+        pauseAll();
+        if (take.getNumSamples() < (int) (sr * 0.05)) { titleLabel.setText ("Nothing recorded.", juce::dontSendNotification); return; }
+
+        const juce::File dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                                   .getChildFile ("Layback").getChildFile ("recordings");
+        dir.createDirectory();
+        const juce::File wav = dir.getChildFile ("take_" + juce::String ((juce::int64) juce::Time::getMillisecondCounter()) + ".wav");
+        {
+            juce::WavAudioFormat fmt;
+            if (auto os = std::unique_ptr<juce::FileOutputStream> (wav.createOutputStream()))
+                if (auto w = std::unique_ptr<juce::AudioFormatWriter> (fmt.createWriterFor (os.get(), sr, 2, 24, {}, 0)))
+                { os.release(); w->writeFromAudioSampleBuffer (take, 0, take.getNumSamples()); }
+        }
+        if (! wav.existsAsFile()) { titleLabel.setText ("Couldn't write the recording.", juce::dontSendNotification); return; }
+
+        const int g = activeGroup;
+        addTrackFromFile (g, wav);                          // adds the take as a new track (clip at 0)
+        auto& tracks = groups[(size_t) g]->tracks;
+        if (! tracks.empty())
+        {
+            auto* nt = tracks.back().get();
+            nt->name = "Take " + juce::String ((int) tracks.size());
+            if (! nt->clips.empty()) { nt->clips[0].timelineStart = recordStartTime; audioEngine.setTrackClips (nt->engineId, nt->clips); }
+        }
+        updateTimelineSize(); resized(); timeline.repaint();
+        titleLabel.setText ("Recorded take added at " + formatTimecode (recordStartTime), juce::dontSendNotification);
+    }
 
     void toggleLoop()
     {
@@ -2974,6 +3018,8 @@ private:
 
         if (splitting && (++splitElapsedTicks % 30 == 0))   // heartbeat so a multi-minute split doesn't look frozen
             titleLabel.setText ("Splitting stems... " + juce::String (splitElapsedTicks / 30) + " s  (right-click the track to cancel)", juce::dontSendNotification);
+        if (audioEngine.isRecording() && (++recordTicks % 30 == 0))
+            titleLabel.setText ("Recording... " + juce::String (recordTicks / 30) + " s  (press Record to stop)", juce::dontSendNotification);
 
         if (mixerVisible) mixerView.updateMeters();
 
@@ -3008,7 +3054,8 @@ private:
             else if ((tl > 0.0 && ph >= tl - 0.05) || ! audioEngine.isPlaying())
             {
                 reachedEnd = true;
-                pauseAll();
+                if (audioEngine.isRecording()) finishRecording();   // capture the take if we were recording
+                else                           pauseAll();
             }
 
             playhead = ph;
@@ -3084,6 +3131,8 @@ private:
     bool      automationVisible = false;   // volume-automation overlay/read is on
     bool      frameSnapOn = false;         // snap edits to video frames
     int       autosaveCounter = 0;         // timer ticks since the last autosave
+    double    recordStartTime = 0.0;       // playhead position where recording began
+    int       recordTicks = 0;             // timer ticks since recording started (for the heartbeat)
 
     MixerView mixerView;
     bool      mixerVisible = false;

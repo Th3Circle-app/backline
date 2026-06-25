@@ -25,6 +25,13 @@ public:
     juce::AudioFormatManager& getFormatManager() { return formatManager; }
     double getDeviceSampleRate() const { return deviceRate; }
 
+    //== Recording (capture from the audio input device) ==
+    bool  hasAudioInput() const;          // an input device with >=1 channel is open
+    void  startRecording();               // begin capturing input
+    bool  isRecording() const;
+    /** Stop capturing; returns the recorded take (stereo, device rate). Empty if nothing captured. */
+    juce::AudioBuffer<float> stopRecording();
+
     /** Decodes a file into memory at the device rate. Returns a track id, or -1.
         fullLengthSeconds is set to the song's duration. */
     int  addTrack (const juce::File& file, double& fullLengthSeconds);
@@ -141,12 +148,47 @@ private:
     void prepareProcessor (juce::AudioProcessor& p) const;
     void addProcessorToTrack (int trackId, std::unique_ptr<juce::AudioProcessor> p);
 
+    // Captures the input device into a preallocated buffer while recording. Reads inputs only,
+    // never writes outputs, so it can run as a second device callback without touching the mix.
+    struct RecordTap : public juce::AudioIODeviceCallback
+    {
+        std::atomic<bool> active { false };
+        std::atomic<int>  writePos { 0 };
+        juce::AudioBuffer<float> buf;
+        double sr = 44100.0;
+
+        void audioDeviceAboutToStart (juce::AudioIODevice* d) override
+        {
+            sr = d->getCurrentSampleRate() > 0.0 ? d->getCurrentSampleRate() : 44100.0;
+            buf.setSize (2, (int) (sr * 60.0 * 8.0));   // up to ~8 minutes, stereo
+            buf.clear(); writePos.store (0);
+        }
+        void audioDeviceStopped() override {}
+        void audioDeviceIOCallbackWithContext (const float* const* in, int numIn,
+                                               float* const*, int, int n,
+                                               const juce::AudioIODeviceCallbackContext&) override
+        {
+            if (! active.load()) return;
+            int w = writePos.load();
+            const int cap = buf.getNumSamples();
+            for (int i = 0; i < n && w < cap; ++i, ++w)
+            {
+                const float l = (numIn > 0 && in[0] != nullptr) ? in[0][i] : 0.0f;
+                const float r = (numIn > 1 && in[1] != nullptr) ? in[1][i] : l;
+                buf.setSample (0, w, l);
+                buf.setSample (1, w, r);
+            }
+            writePos.store (w);
+        }
+    };
+
     juce::AudioDeviceManager   deviceManager;
     juce::AudioFormatManager   formatManager;
     juce::AudioPluginFormatManager pluginFormats;
     juce::KnownPluginList      knownPlugins;
     juce::AudioSourcePlayer    sourcePlayer;
     juce::AudioTransportSource transport;
+    RecordTap recordTap;
     Mixer  mixer;
     double deviceRate = 44100.0;
     int    nextTrackId = 0;

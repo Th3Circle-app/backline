@@ -219,7 +219,7 @@ AudioEngine::AudioEngine()
     juce::addDefaultFormatsToManager (pluginFormats);   // AU + VST3 hosting (new JUCE helper)
     mixer.ensureScratch (2, mixer.preparedBlock);
 
-    deviceManager.initialiseWithDefaultDevices (0, 2);
+    deviceManager.initialiseWithDefaultDevices (2, 2);   // 2 in (for recording) + 2 out
     if (auto* dev = deviceManager.getCurrentAudioDevice())
         if (dev->getCurrentSampleRate() > 0.0)
             deviceRate = dev->getCurrentSampleRate();
@@ -227,11 +227,30 @@ AudioEngine::AudioEngine()
     mixer.rate = deviceRate;
     transport.setSource (&mixer);          // in-memory mix: no read-ahead thread needed
     sourcePlayer.setSource (&transport);
-    deviceManager.addAudioCallback (&sourcePlayer);
+    deviceManager.addAudioCallback (&sourcePlayer);   // writes the mix to the output
+    deviceManager.addAudioCallback (&recordTap);      // reads the input (after the mix is written)
+}
+
+bool AudioEngine::hasAudioInput() const
+{
+    if (auto* d = deviceManager.getCurrentAudioDevice()) return d->getActiveInputChannels().countNumberOfSetBits() > 0;
+    return false;
+}
+void AudioEngine::startRecording() { recordTap.writePos.store (0); recordTap.active.store (true); }
+bool AudioEngine::isRecording() const { return recordTap.active.load(); }
+juce::AudioBuffer<float> AudioEngine::stopRecording()
+{
+    recordTap.active.store (false);
+    const int n = recordTap.writePos.load();
+    juce::AudioBuffer<float> take (2, juce::jmax (1, n));
+    take.clear();
+    if (n > 0) for (int ch = 0; ch < 2; ++ch) take.copyFrom (ch, 0, recordTap.buf, ch, 0, n);
+    return take;
 }
 
 AudioEngine::~AudioEngine()
 {
+    deviceManager.removeAudioCallback (&recordTap);
     deviceManager.removeAudioCallback (&sourcePlayer);
     transport.setSource (nullptr);
     sourcePlayer.setSource (nullptr);
