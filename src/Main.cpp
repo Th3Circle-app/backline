@@ -90,6 +90,31 @@ struct PluginListWindow : public juce::DocumentWindow
 };
 
 //==============================================================================
+/** A simple read-only text window (Help / Shortcuts). */
+struct InfoWindow : public juce::DocumentWindow
+{
+    std::function<void()> onClose;
+    InfoWindow (const juce::String& title, const juce::String& body, juce::Colour bg, juce::Colour fg)
+        : juce::DocumentWindow (title, bg, juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        auto* te = new juce::TextEditor();
+        te->setMultiLine (true); te->setReadOnly (true); te->setScrollbarsShown (true); te->setCaretVisible (false);
+        te->setColour (juce::TextEditor::backgroundColourId, bg);
+        te->setColour (juce::TextEditor::textColourId, fg);
+        te->setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        te->setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 13.0f, juce::Font::plain)));
+        te->setText (body, false);
+        setContentOwned (te, false);
+        setResizable (true, false);
+        setSize (560, 640);
+        setTopLeftPosition (200, 110);
+        setVisible (true);
+    }
+    void closeButtonPressed() override { if (onClose) onClose(); }
+};
+
+//==============================================================================
 /** Floating pop-out that shows the synced video while you scrub the timeline,
     so the main window stays a pure DAW surface. */
 class VideoWindow : public juce::DocumentWindow
@@ -315,6 +340,9 @@ public:
         startTimerHz (30);
 
         loadPersistedPluginList();          // instant; the user triggers a (re)scan from the track menu
+
+        auto a = alive;                     // offer to recover an unsaved session from a previous run
+        juce::MessageManager::callAsync ([this, a] { if (a->load()) maybeOfferRecovery(); });
     }
 
     ~MainComponent() override
@@ -326,6 +354,7 @@ public:
         procReg->killAll();          // kill any running Demucs/uv/ffmpeg child processes so they don't linger
         videoWindow.reset();         // release the video pop-out before the VideoView member is destroyed
         pluginListWindow.reset();    // close the plugin browser before the engine list it edits goes away
+        helpWindow.reset();
         closeAllPluginWindows();     // delete editors while their processors (in the engine) are still alive
         removeKeyListener (commandManager.getKeyMappings());
         stopTimer();
@@ -1886,7 +1915,7 @@ private:
         }
         else if (name == "Help")
         {
-            m.addItem (9098, "Layback Station Help", false);
+            m.addItem (9098, "Layback Station Help");
         }
         return m;
     }
@@ -1920,6 +1949,7 @@ private:
             case 9074: applyFade (1, 0); break;  case 9075: applyFade (1, 1); break;
             case 9076: applyFade (1, 2); break;  case 9077: applyFade (1, 3); break;
             case 9078: applyFade (2); break;
+            case 9098: openHelpWindow(); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9061: frameSnapOn = ! frameSnapOn; timeline.setFrameSnap (frameSnapOn);
                        titleLabel.setText (frameSnapOn ? "Snap to frames: on" : "Snap to frames: off", juce::dontSendNotification); break;
@@ -2087,6 +2117,49 @@ private:
             pluginListWindow.reset();
             restoreKeyFocus();
         };
+    }
+
+    void openHelpWindow()
+    {
+        if (helpWindow != nullptr) { helpWindow->toFront (true); return; }
+        helpWindow = std::make_unique<InfoWindow> ("Layback Station - Help & Shortcuts", helpText(), laf.skin.panel, laf.skin.text);
+        auto a = alive;
+        helpWindow->onClose = [this, a] { if (a->load()) { helpWindow.reset(); restoreKeyFocus(); } };
+    }
+    static juce::String helpText()
+    {
+        return juce::String::fromUTF8 (
+            "LAYBACK STATION - Help & Shortcuts\n"
+            "===================================\n\n"
+            "GETTING STARTED\n"
+            "  - Drag a video from Finder into the window (or File > Add Video).\n"
+            "  - Drag songs onto it (or + Import Track) to audition against picture.\n"
+            "  - The floating Video window follows the playhead as you scrub.\n\n"
+            "TRANSPORT\n"
+            "  Space         Play / Pause\n"
+            "  Cmd+G         Go to position (HH:MM:SS:FF / M:SS / seconds)\n"
+            "  Z             Zoom to fit       Cmd+scroll  Zoom in / out\n\n"
+            "CLIP EDITING  (right-click a clip for the full menu)\n"
+            "  Split, Delete, Crossfade with previous, Normalize\n"
+            "  Fades: in/out with curve shapes (drag the clip's top corners)\n"
+            "  Clip gain: drag the horizontal line across the clip\n"
+            "  Time-Stretch... : fit a clip to a length (pitch preserved)\n"
+            "  Speed Fade In/Out : tape-style spin-up / slow-down\n"
+            "  Cmd+C / Cmd+V / Cmd+D : copy / paste / duplicate\n"
+            "  Left/Right arrows : nudge the selected clip\n\n"
+            "MARKERS\n"
+            "  M  add marker at playhead   (click a flag to jump; double-click to rename)\n\n"
+            "MIX & FX\n"
+            "  Mixer: fader, pan, mute, solo, meters, inserts, master\n"
+            "  Inserts: EQ, Compressor, Reverb, Delay, Limiter, Gate + AU/VST3\n"
+            "  A  show / edit volume automation (click to add points, double-click to delete)\n\n"
+            "STEMS\n"
+            "  Right-click a track > Split into Stems (Demucs)\n\n"
+            "SKINS\n"
+            "  Keys menu: Layback / Logic / Pro Tools / Ableton (remembered next launch)\n\n"
+            "PROJECT\n"
+            "  Cmd+Z / Cmd+Shift+Z undo / redo. Autosaves every minute (recovers on crash).\n"
+            "  Export: video + audio (muxed), or audio-only WAV.\n");
     }
 
     // Insert a native effect (0 = EQ, 1 = Compressor) on the selected track and open its editor.
@@ -2467,9 +2540,10 @@ private:
     //==========================================================================
     // Project save / open. A ".lbproj" bundle = project.json + a media/ folder of copied files.
     juce::String copyMedia (const juce::File& src, const juce::File& mediaDir,
-                            std::map<juce::String, juce::String>& seen, bool& allOk)
+                            std::map<juce::String, juce::String>& seen, bool& allOk, bool doCopy = true)
     {
         if (! src.existsAsFile()) { allOk = false; return src.getFullPathName(); }
+        if (! doCopy) return src.getFullPathName();   // autosave/recovery: reference originals (no copy)
         const juce::String key = src.getFullPathName();
         if (auto it = seen.find (key); it != seen.end()) return it->second;   // same source -> reuse the same media file
 
@@ -2486,6 +2560,82 @@ private:
         if (! copied) allOk = false;
         seen[key] = result;
         return result;
+    }
+
+    // Serialize the whole project to a var. doCopy=true copies media into mediaDir (for .lbproj);
+    // doCopy=false references the original file paths (for autosave/recovery).
+    juce::var buildProjectVar (const juce::File& mediaDir, bool doCopy, bool& allOk)
+    {
+        std::map<juce::String, juce::String> seen;
+        auto* root = new juce::DynamicObject();
+        root->setProperty ("version", 1);
+        root->setProperty ("activeGroup", activeGroup);
+        root->setProperty ("loopEnabled", loopEnabled);
+        root->setProperty ("loopStart", loopStart);
+        root->setProperty ("loopEnd", loopEnd);
+        root->setProperty ("masterGain", audioEngine.getMasterGain());
+        root->setProperty ("masterMute", audioEngine.getMasterMute());
+
+        juce::var garr;
+        for (auto& g : groups)
+        {
+            auto* go = new juce::DynamicObject();
+            go->setProperty ("name", g->name);
+            go->setProperty ("video", copyMedia (g->file, mediaDir, seen, allOk, doCopy));
+            go->setProperty ("duration", g->duration);
+            go->setProperty ("expanded", g->expanded);
+            go->setProperty ("videoMute", g->videoMute);
+            go->setProperty ("videoSolo", g->videoSolo);
+            go->setProperty ("cuts", doublesToVar (g->cutMarkers));
+            juce::var marr;
+            for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
+            go->setProperty ("markers", marr);
+
+            juce::var tarr;
+            for (auto& t : g->tracks)
+            {
+                auto* to = new juce::DynamicObject();
+                to->setProperty ("name", t->name);
+                to->setProperty ("file", copyMedia (t->file, mediaDir, seen, allOk, doCopy));
+                to->setProperty ("sourceLength", t->sourceLength);
+                to->setProperty ("mute", t->mute);
+                to->setProperty ("solo", t->solo);
+                to->setProperty ("volume", t->volume);
+                to->setProperty ("pan", t->pan);
+                to->setProperty ("recordArm", t->recordArm);
+                if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
+                juce::var aarr;
+                for (auto& p : t->volumeAuto) { auto* po = new juce::DynamicObject(); po->setProperty ("t", p.time); po->setProperty ("v", p.value); aarr.append (juce::var (po)); }
+                to->setProperty ("auto", aarr);
+                to->setProperty ("autoOn", t->automationOn);
+                to->setProperty ("beats", doublesToVar (t->beatMarkers));
+
+                juce::var carr;
+                for (auto& c : t->clips)
+                {
+                    auto* co = new juce::DynamicObject();
+                    co->setProperty ("start", c.timelineStart);
+                    co->setProperty ("in", c.sourceIn);
+                    co->setProperty ("dur", c.duration);
+                    co->setProperty ("fadeIn", c.fadeIn);
+                    co->setProperty ("fadeOut", c.fadeOut);
+                    co->setProperty ("fadeInShape", c.fadeInShape);
+                    co->setProperty ("fadeOutShape", c.fadeOutShape);
+                    co->setProperty ("gainDb", c.gainDb);
+                    co->setProperty ("stretch", c.stretchRatio);
+                    co->setProperty ("spdIn", c.speedFadeIn);
+                    co->setProperty ("spdOut", c.speedFadeOut);
+                    co->setProperty ("bakeSrc", c.bakedSrcSeconds);
+                    carr.append (juce::var (co));
+                }
+                to->setProperty ("clips", carr);
+                tarr.append (juce::var (to));
+            }
+            go->setProperty ("tracks", tarr);
+            garr.append (juce::var (go));
+        }
+        root->setProperty ("groups", garr);
+        return juce::var (root);
     }
 
     void saveProject()
@@ -2505,83 +2655,48 @@ private:
                 const juce::File media = dir.getChildFile ("media");
                 if (! media.createDirectory().wasOk()) { titleLabel.setText ("Save failed: can't create media folder.", juce::dontSendNotification); return; }
 
-                std::map<juce::String, juce::String> seen;
                 bool allOk = true;
-
-                auto* root = new juce::DynamicObject();
-                root->setProperty ("version", 1);
-                root->setProperty ("activeGroup", activeGroup);
-                root->setProperty ("loopEnabled", loopEnabled);
-                root->setProperty ("loopStart", loopStart);
-                root->setProperty ("loopEnd", loopEnd);
-                root->setProperty ("masterGain", audioEngine.getMasterGain());
-                root->setProperty ("masterMute", audioEngine.getMasterMute());
-
-                juce::var garr;
-                for (auto& g : groups)
-                {
-                    auto* go = new juce::DynamicObject();
-                    go->setProperty ("name", g->name);
-                    go->setProperty ("video", copyMedia (g->file, media, seen, allOk));
-                    go->setProperty ("duration", g->duration);
-                    go->setProperty ("expanded", g->expanded);
-                    go->setProperty ("videoMute", g->videoMute);
-                    go->setProperty ("videoSolo", g->videoSolo);
-                    go->setProperty ("cuts", doublesToVar (g->cutMarkers));
-                    juce::var marr;
-                    for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
-                    go->setProperty ("markers", marr);
-
-                    juce::var tarr;
-                    for (auto& t : g->tracks)
-                    {
-                        auto* to = new juce::DynamicObject();
-                        to->setProperty ("name", t->name);
-                        to->setProperty ("file", copyMedia (t->file, media, seen, allOk));
-                        to->setProperty ("sourceLength", t->sourceLength);
-                        to->setProperty ("mute", t->mute);
-                        to->setProperty ("solo", t->solo);
-                        to->setProperty ("volume", t->volume);
-                        to->setProperty ("pan", t->pan);
-                        to->setProperty ("recordArm", t->recordArm);
-                        if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
-                        juce::var aarr;
-                        for (auto& p : t->volumeAuto) { auto* po = new juce::DynamicObject(); po->setProperty ("t", p.time); po->setProperty ("v", p.value); aarr.append (juce::var (po)); }
-                        to->setProperty ("auto", aarr);
-                        to->setProperty ("autoOn", t->automationOn);
-                        to->setProperty ("beats", doublesToVar (t->beatMarkers));
-
-                        juce::var carr;
-                        for (auto& c : t->clips)
-                        {
-                            auto* co = new juce::DynamicObject();
-                            co->setProperty ("start", c.timelineStart);
-                            co->setProperty ("in", c.sourceIn);
-                            co->setProperty ("dur", c.duration);
-                            co->setProperty ("fadeIn", c.fadeIn);
-                            co->setProperty ("fadeOut", c.fadeOut);
-                            co->setProperty ("fadeInShape", c.fadeInShape);
-                            co->setProperty ("fadeOutShape", c.fadeOutShape);
-                            co->setProperty ("gainDb", c.gainDb);
-                            co->setProperty ("stretch", c.stretchRatio);
-                            co->setProperty ("spdIn", c.speedFadeIn);
-                            co->setProperty ("spdOut", c.speedFadeOut);
-                            co->setProperty ("bakeSrc", c.bakedSrcSeconds);
-                            carr.append (juce::var (co));
-                        }
-                        to->setProperty ("clips", carr);
-                        tarr.append (juce::var (to));
-                    }
-                    go->setProperty ("tracks", tarr);
-                    garr.append (juce::var (go));
-                }
-                root->setProperty ("groups", garr);
-
-                const bool wrote = dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (juce::var (root)));
+                const juce::var rv = buildProjectVar (media, true, allOk);
+                const bool wrote = dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (rv));
+                clearRecovery();   // a real save supersedes the autosave
                 if (! wrote)      titleLabel.setText ("Save failed: couldn't write project.json.", juce::dontSendNotification);
                 else if (! allOk) titleLabel.setText ("Saved (some media kept by reference): " + dir.getFileName(), juce::dontSendNotification);
                 else              titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
             });
+    }
+
+    //== Autosave / crash recovery (references original media; no copy) ==
+    juce::File recoveryFile() const
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Layback").getChildFile ("recovery.lbproj.json");
+    }
+    void autosaveTick()
+    {
+        if (groups.empty()) return;
+        bool ok = true;
+        const auto rv = buildProjectVar ({}, false, ok);
+        const auto f = recoveryFile();
+        f.getParentDirectory().createDirectory();
+        f.replaceWithText (juce::JSON::toString (rv));
+    }
+    void clearRecovery() { recoveryFile().deleteFile(); }
+    void maybeOfferRecovery()
+    {
+        const auto f = recoveryFile();
+        if (! f.existsAsFile()) return;
+        auto* w = new juce::AlertWindow ("Recover unsaved session?",
+                       "Layback Station found an unsaved session from a previous run. Restore it?",
+                       juce::MessageBoxIconType::QuestionIcon);
+        w->addButton ("Restore", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Discard", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, f] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (r == 1) { const auto v = juce::JSON::parse (f.loadFileAsString()); if (v.isObject()) loadProjectFromVar (v, f.getParentDirectory()); }
+            else        clearRecovery();
+            restoreKeyFocus();
+        }), false);
     }
 
     void openProject()
@@ -2606,6 +2721,7 @@ private:
     void newProject()
     {
         pauseAll();
+        clearRecovery();           // a fresh/opened session supersedes any autosave (var already in memory if restoring)
         closeAllPluginWindows();   // their processors live in the engine tracks we're about to remove
         for (auto& g : groups)
             for (auto& t : g->tracks)
@@ -2765,6 +2881,8 @@ private:
 
     void timerCallback() override
     {
+        if (++autosaveCounter >= 1800) { autosaveCounter = 0; autosaveTick(); }   // autosave every ~60 s
+
         if (mixerVisible) mixerView.updateMeters();
 
         const double vdur = videoDur();
@@ -2859,6 +2977,7 @@ private:
     bool videoAudible = false;                  // is the video's audio currently in the mix (for the full-mix meter)
     std::vector<std::unique_ptr<PluginWindow>> pluginWindows;
     std::unique_ptr<PluginListWindow> pluginListWindow;
+    std::unique_ptr<InfoWindow>       helpWindow;
     std::map<int, juce::PluginDescription>     pluginMenuMap;   // menu id -> plugin to instantiate
     bool scanning = false;
     bool pluginsScanned = false;
@@ -2869,6 +2988,7 @@ private:
     bool      hasClipboard = false;
     bool      automationVisible = false;   // volume-automation overlay/read is on
     bool      frameSnapOn = false;         // snap edits to video frames
+    int       autosaveCounter = 0;         // timer ticks since the last autosave
 
     MixerView mixerView;
     bool      mixerVisible = false;
