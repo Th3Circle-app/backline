@@ -65,3 +65,15 @@ target_link_libraries(LaybackStation
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# Bundle the `uv` installer (a single static binary) into the app so the one-click
+# stem-splitter setup needs nothing preinstalled on a clean Mac. ffmpeg is left as an
+# optional system escape hatch (Homebrew ffmpeg is dynamically linked); SoundTouch is
+# already compiled in statically.
+find_program(UV_BIN uv PATHS "$ENV{HOME}/.local/bin" /usr/local/bin /opt/homebrew/bin)
+if(UV_BIN)
+    add_custom_command(TARGET LaybackStation POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_DIR:LaybackStation>/Contents/Resources/bin"
+        COMMAND ${CMAKE_COMMAND} -E copy "${UV_BIN}" "$<TARGET_BUNDLE_DIR:LaybackStation>/Contents/Resources/bin/uv"
+        COMMENT "Bundling uv into the app for zero-prerequisite stem-splitter setup")
+endif()

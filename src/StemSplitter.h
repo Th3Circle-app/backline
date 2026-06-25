@@ -41,6 +41,17 @@ namespace StemSplitter
         Python 3.11 + installs Demucs). Returns an invalid File if not found. */
     inline juce::File findUv()
     {
+        // prefer the copy bundled inside the app (zero prerequisites on a clean machine)
+        const auto bundled = juce::File::getSpecialLocation (juce::File::currentApplicationFile)
+                                 .getChildFile ("Contents/Resources/bin")
+                                 .getChildFile (
+                                    #if JUCE_WINDOWS
+                                     "uv.exe");
+                                    #else
+                                     "uv");
+                                    #endif
+        if (bundled.existsAsFile()) return bundled;
+
         const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
         juce::Array<juce::File> candidates;
        #if JUCE_WINDOWS
