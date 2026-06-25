@@ -71,6 +71,8 @@ void AudioEngine::Mixer::ensureScratch (int channels, int samples)   // non-real
     if (scratch.getNumChannels() < channels || scratch.getNumSamples() < samples)
         scratch.setSize (juce::jmax (channels, scratch.getNumChannels()),
                          juce::jmax (samples,  scratch.getNumSamples()), false, true, true);
+    if (aux.getNumChannels() < 2 || aux.getNumSamples() < samples)
+        aux.setSize (2, juce::jmax (samples, aux.getNumSamples()), false, true, true);
 }
 
 void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& info)
@@ -83,6 +85,8 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
     const juce::int64 blockStart = pos.load (std::memory_order_relaxed);
     const double rt = rate.load();
     if (numCh <= 0 || n <= 0 || n > scratch.getNumSamples()) { pos.store (blockStart + n, std::memory_order_relaxed); return; }
+    const bool auxActive = ! auxChain.empty() && aux.getNumSamples() >= n;
+    if (auxActive) aux.clear (0, n);   // FX/aux bus accumulator for this block
 
     for (auto& tptr : tracks)
     {
@@ -186,12 +190,27 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
                 info.buffer->addFrom (1, info.startSample, scratch, 1, 0, n, rg);
                 for (int ch = 2; ch < numCh; ++ch)
                     info.buffer->addFrom (ch, info.startSample, scratch, ch, 0, n, g);
+                if (const float snd = t->send.load(); auxActive && snd > 0.0001f)   // post-fader send to the FX bus
+                {
+                    aux.addFrom (0, 0, scratch, 0, 0, n, lg * snd);
+                    aux.addFrom (1, 0, scratch, 1, 0, n, rg * snd);
+                }
             }
             else
             {
                 info.buffer->addFrom (0, info.startSample, scratch, 0, 0, n, g);
             }
         }
+    }
+
+    if (auxActive)   // FX/aux bus: run its chain on the summed sends, then return to master
+    {
+        float* ach[2] = { aux.getWritePointer (0), aux.getWritePointer (1) };
+        juce::AudioBuffer<float> proxy (ach, 2, n);
+        juce::MidiBuffer midi;
+        for (auto& p : auxChain) if (p != nullptr) p->processBlock (proxy, midi);
+        const int mc = juce::jmin (numCh, 2);
+        for (int ch = 0; ch < mc; ++ch) info.buffer->addFrom (ch, info.startSample, aux, ch, 0, n);
     }
 
     const float mg = masterMute.load() ? 0.0f : masterGain.load();   // master fader (0 when muted)
@@ -229,6 +248,8 @@ AudioEngine::AudioEngine()
     sourcePlayer.setSource (&transport);
     deviceManager.addAudioCallback (&sourcePlayer);   // writes the mix to the output
     deviceManager.addAudioCallback (&recordTap);      // reads the input (after the mix is written)
+
+    addAuxEffect (2);   // pre-load a reverb on the FX bus so a track's Send knob is immediately useful
 }
 
 bool AudioEngine::hasAudioInput() const
@@ -650,6 +671,43 @@ void AudioEngine::addNativeEffect (int trackId, int which)
         default: p = std::make_unique<NativeEQ>();         break;
     }
     addProcessorToTrack (trackId, std::move (p));
+}
+
+static std::unique_ptr<juce::AudioProcessor> makeNativeEffect (int which)
+{
+    switch (which)
+    {
+        case 1:  return std::make_unique<NativeCompressor>();
+        case 2:  return std::make_unique<NativeReverb>();
+        case 3:  return std::make_unique<NativeDelay>();
+        case 4:  return std::make_unique<NativeLimiter>();
+        case 5:  return std::make_unique<NativeGate>();
+        default: return std::make_unique<NativeEQ>();
+    }
+}
+
+void AudioEngine::setTrackSend (int trackId, float level)
+{
+    const juce::ScopedLock sl (mixer.lock);
+    if (auto* t = findTrack (trackId)) t->send.store (juce::jlimit (0.0f, 1.0f, level));
+}
+void AudioEngine::addAuxEffect (int which)
+{
+    auto p = makeNativeEffect (which);
+    prepareProcessor (*p);
+    const juce::ScopedLock sl (mixer.lock);
+    mixer.auxChain.push_back (std::move (p));
+}
+int AudioEngine::auxPluginCount() { const juce::ScopedLock sl (mixer.lock); return (int) mixer.auxChain.size(); }
+juce::AudioProcessor* AudioEngine::auxPlugin (int index)
+{ const juce::ScopedLock sl (mixer.lock); return (index >= 0 && index < (int) mixer.auxChain.size()) ? mixer.auxChain[(size_t) index].get() : nullptr; }
+juce::String AudioEngine::auxPluginName (int index)
+{ const juce::ScopedLock sl (mixer.lock); return (index >= 0 && index < (int) mixer.auxChain.size()) ? mixer.auxChain[(size_t) index]->getName() : juce::String(); }
+void AudioEngine::removeAuxPlugin (int index)
+{
+    std::unique_ptr<juce::AudioProcessor> doomed;   // freed outside the lock
+    { const juce::ScopedLock sl (mixer.lock);
+      if (index >= 0 && index < (int) mixer.auxChain.size()) { doomed = std::move (mixer.auxChain[(size_t) index]); mixer.auxChain.erase (mixer.auxChain.begin() + index); } }
 }
 
 bool AudioEngine::addHostedPlugin (int trackId, const juce::PluginDescription& desc, juce::String& error)

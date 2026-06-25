@@ -31,7 +31,9 @@ struct ChannelStrip : public juce::Component
     std::function<void()>       onFxClick, onSelectClick;
     std::function<void (bool)>  onRecordArmToggle;   // track R cell
     std::function<void()>       onBounceClick;       // master Bnc cell
-    bool recArmed = false;
+    std::function<void (float)> onSendChange;        // FX-bus send level
+    bool  recArmed = false;
+    float sendLevel = 0.0f;
 
     explicit ChannelStrip (bool master) : isMaster (master)
     {
@@ -77,16 +79,27 @@ struct ChannelStrip : public juce::Component
         repaint();
     }
 
+    void setSendFromX (int x)
+    {
+        sendLevel = juce::jlimit (0.0f, 1.0f, (float) (x - sendsRow.getX()) / (float) juce::jmax (1, sendsRow.getWidth()));
+        if (onSendChange) onSendChange (sendLevel);
+        repaint();
+    }
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (! isMaster && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }
         if (isMaster && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
+        if (! isMaster && sendsRow.contains (e.getPosition())) { setSendFromX (e.x); return; }              // FX-bus send
         if (! isMaster && ! riRow.isEmpty())
         {
             auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1);   // R cell = left half
             if (rR.contains (e.getPosition())) { recArmed = ! recArmed; if (onRecordArmToggle) onRecordArmToggle (recArmed); repaint(); return; }
         }
         if (onSelectClick) onSelectClick();
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! isMaster && sendsRow.contains (e.getMouseDownPosition())) setSendFromX (e.x);
     }
 
     juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, groupRow, autoRow, riRow, peakLabel;
@@ -173,10 +186,19 @@ struct ChannelStrip : public juce::Component
             g.drawText (t, b.toFloat().withTrimmedLeft (lpad), juce::Justification::centredLeft, true);
         };
         rowSlot (inRow,     "In 1-2",     skin.text,  true,  false, true);   // routing rows are read-only labels for now
-        rowSlot (sendsRow,  "Sends",      skin.muted, false, true,  true);
         rowSlot (outputRow, "Stereo Out", skin.text,  false, false, true);
         rowSlot (groupRow,  "Group",      skin.text,  false, false, true);
         rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false, true);
+
+        if (! sendsRow.isEmpty() && ! isMaster)   // FX-bus send level (drag to set)
+        {
+            auto rf = sendsRow.toFloat().reduced (2.0f, 1.0f);
+            g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (rf, 3.0f);
+            g.setColour (skin.accent.withAlpha (0.55f));  g.fillRoundedRectangle (rf.withWidth (rf.getWidth() * juce::jlimit (0.0f, 1.0f, sendLevel)), 3.0f);
+            g.setColour (skin.windowBg.darker (0.2f));    g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+            g.setColour (skin.text); g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+            g.drawText ("Send " + juce::String ((int) (sendLevel * 100.0f)), sendsRow.toFloat().withTrimmedLeft (6.0f), juce::Justification::centredLeft, true);
+        }
 
         if (! valueBox.isEmpty())                                    // live fader dB readout
         {
@@ -260,6 +282,7 @@ public:
     std::function<void (int, int)>        onSelect;
     std::function<void (int, int, bool)>  onRecordArm;   // (group, track, armed)
     std::function<void ()>                onBounce;       // master Bnc -> export/bounce
+    std::function<void (int, int, float)> onSend;         // (group, track, FX-bus send level)
     std::function<void (float)>           onMasterVolume;
     std::function<void (bool)>            onMasterMute;
 
@@ -309,6 +332,7 @@ public:
             s->pan.setValue (tr->pan, juce::dontSendNotification);
             s->mute.setToggleState (tr->mute, juce::dontSendNotification);
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
+            s->sendLevel = tr->send;
             s->repaint();
         }
     }
@@ -364,6 +388,7 @@ private:
             s->mute.setToggleState (tr->mute, juce::dontSendNotification);
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
             s->recArmed = tr->recordArm;
+            s->sendLevel = tr->send;
         }
         else
         {
@@ -381,6 +406,7 @@ private:
         s->onSelectClick= [this, g2, t2] { if (onSelect) onSelect (g2, t2); };
         s->onRecordArmToggle = [this, g2, t2] (bool b) { if (onRecordArm) onRecordArm (g2, t2, b); };
         s->onBounceClick     = [this] { if (onBounce) onBounce(); };
+        s->onSendChange      = [this, g2, t2] (float v) { if (onSend) onSend (g2, t2, v); };
 
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));

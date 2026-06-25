@@ -74,6 +74,14 @@ public:
     juce::String trackPluginName (int trackId, int index);
     void removeTrackPlugin (int trackId, int index);
 
+    //== FX / aux bus (a shared send destination, e.g. a reverb) ==
+    void setTrackSend (int trackId, float level);   // 0..1, post-fader
+    void addAuxEffect (int which);                  // native effect (0 EQ,1 Comp,2 Reverb,3 Delay,4 Limiter,5 Gate)
+    int  auxPluginCount();
+    juce::AudioProcessor* auxPlugin (int index);
+    juce::String auxPluginName (int index);
+    void removeAuxPlugin (int index);
+
     /** Ensures the transport runs at least this long (so the playhead keeps
         advancing over video-only regions with no audio). */
     void setMinLengthSeconds (double seconds);
@@ -108,6 +116,7 @@ private:
         std::vector<AudioClip>   clips;
         std::atomic<float>       gain { 1.0f };
         std::atomic<float>       pan  { 0.0f };
+        std::atomic<float>       send { 0.0f };   // post-fader send level to the FX/aux bus (0..1)
         std::atomic<float>       peak { 0.0f };   // post-fader peak of the last block (for the meter)
         std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
         std::vector<std::pair<double, float>> autoEnv;   // volume envelope (time, gain), sorted; read under lock
@@ -136,6 +145,8 @@ private:
         std::atomic<double> rate { 44100.0 };     // atomic: written by device-prepare thread, read on message thread
         double minLengthSeconds = 0.0;
         juce::AudioBuffer<float> scratch;         // reused per-track render buffer (no realtime alloc)
+        juce::AudioBuffer<float> aux;             // FX/aux bus accumulator (tracks send into it; chain -> master)
+        std::vector<std::unique_ptr<juce::AudioProcessor>> auxChain;   // FX on the aux bus (e.g. a shared reverb)
         std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
         std::atomic<float> masterGain { 1.0f };
         std::atomic<float> masterPeak { 0.0f };
