@@ -447,8 +447,36 @@ public:
         timeline.setSelection (g, -1, -1);
         timeline.setPlayhead (0.0);
         refreshMixer();
+        rebuildFilmstrip();
         resized();
         timeline.repaint();
+    }
+
+    // Extract a row of thumbnails across the active video for the movie-track filmstrip (off the message thread).
+    void rebuildFilmstrip()
+    {
+        timeline.setFilmstrip ({});
+        if (! validGroup (activeGroup)) return;
+        const juce::File vid = groups[(size_t) activeGroup]->file;
+        const double dur = juce::jmax (0.1, groups[(size_t) activeGroup]->duration);
+        if (! vid.existsAsFile()) return;
+        auto a = alive;
+        std::thread ([this, a, vid, dur]
+        {
+            std::vector<juce::Image> frames;
+            const int N = 24;
+            for (int i = 0; i < N; ++i)
+            {
+                if (! a->load()) return;
+                frames.push_back (VideoView::grabFrame (vid, dur * ((double) i + 0.5) / (double) N, 160));
+            }
+            juce::MessageManager::callAsync ([this, a, vid, frames]() mutable
+            {
+                if (! a->load()) return;
+                if (validGroup (activeGroup) && groups[(size_t) activeGroup]->file == vid)
+                    timeline.setFilmstrip (std::move (frames));
+            });
+        }).detach();
     }
 
     void importTrack (int g)

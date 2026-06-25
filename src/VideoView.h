@@ -21,6 +21,9 @@ public:
     /** Reads a video file's duration (seconds) without loading it into the player. */
     static double probeDurationSeconds (const juce::File& file);
 
+    /** Grab a single frame as an image (for filmstrip thumbnails). Synchronous; call off the message thread. */
+    static juce::Image grabFrame (const juce::File& file, double timeSeconds, int maxWidth);
+
     /** Muxes a video file's picture with an audio file into outFile (.mov), async.
         onDone(success, errorMessage) is called on the message thread. */
     static void exportVideoWithAudio (const juce::File& videoFile, const juce::File& audioFile,

@@ -375,6 +375,21 @@ void TimelineComponent::paint (juce::Graphics& g)
                 }
                 g.setColour (base.brighter (0.30f));
                 g.drawRoundedRectangle (clip, rad, 1.0f);
+
+                if (active && ! filmstrip.empty())   // movie-track filmstrip thumbnails
+                {
+                    juce::Graphics::ScopedSaveState ss (g);
+                    g.reduceClipRegion (clip.toNearestInt());
+                    const int nf = (int) filmstrip.size();
+                    const float tileW = clip.getWidth() / (float) nf;
+                    for (int i = 0; i < nf; ++i)
+                        if (filmstrip[(size_t) i].isValid())
+                            g.drawImage (filmstrip[(size_t) i],
+                                         juce::Rectangle<float> (clip.getX() + (float) i * tileW, clip.getY() + 1.0f, tileW + 1.0f, clip.getHeight() - 2.0f),
+                                         juce::RectanglePlacement::fillDestination);
+                    g.setColour (juce::Colours::black.withAlpha (0.18f)); g.fillRect (clip);   // dim so the name/cuts read on top
+                }
+
                 if (clip.getWidth() > 64.0f)
                 {
                     g.setColour (labelOn (base).withAlpha (0.85f));

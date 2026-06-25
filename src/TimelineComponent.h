@@ -35,6 +35,7 @@ public:
     void setShuffle (bool b) { shuffle = b; }                 // Shuffle edit mode: moves snap to adjacent clip edges
     void setAutomationMode (bool b) { showAutomation = b; repaint(); }   // show/edit volume envelopes
     void setFrameSnap (bool b) { frameSnap = b; }                        // snap edits to video frames (1/30 s)
+    void setFilmstrip (std::vector<juce::Image> f) { filmstrip = std::move (f); repaint(); }   // movie-track thumbnails (active group)
     int  contentHeight() const;   // total stacked height of all rows (for a scroll viewport)
     int  contentWidth() const;    // total pixel width at the current zoom (for a scroll viewport)
     void setViewportWidth (int w);// visible content width of the scroll viewport (for fit/zoom)
@@ -133,6 +134,7 @@ private:
     bool     shuffle  = false;             // Shuffle edit mode (butt clips against neighbours)
     bool     showAutomation = false;       // volume-automation overlay + edit mode
     bool     frameSnap = false;            // quantize edits to 1/30 s video frames
+    std::vector<juce::Image> filmstrip;    // movie-track thumbnails across the active group's duration
     std::vector<AutoPoint> dragAuto;       // working copy of the envelope being edited
     int      dragAutoGroup = -1, dragAutoTrack = -1, dragAutoIdx = -1, dragAutoRowY = 0;
     double   snapClipToEdges (double ts, double dur) const;   // snap a moved clip to nearby clip boundaries

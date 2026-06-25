@@ -227,6 +227,41 @@ void VideoView::setPositionSeconds (double seconds)
     }
 }
 
+juce::Image VideoView::grabFrame (const juce::File& file, double timeSeconds, int maxWidth)
+{
+    NSString* path = [NSString stringWithUTF8String: file.getFullPathName().toRawUTF8()];
+    NSURL* url = [NSURL fileURLWithPath: path];
+    AVURLAsset* asset = [AVURLAsset URLAssetWithURL: url options: nil];
+    if (asset == nil) return {};
+
+    AVAssetImageGenerator* gen = [[AVAssetImageGenerator alloc] initWithAsset: asset];
+    gen.appliesPreferredTrackTransform = YES;
+    gen.maximumSize = CGSizeMake ((CGFloat) maxWidth, (CGFloat) maxWidth);
+    gen.requestedTimeToleranceBefore = CMTimeMakeWithSeconds (0.5, 600);   // loose tolerance = fast
+    gen.requestedTimeToleranceAfter  = CMTimeMakeWithSeconds (0.5, 600);
+
+    NSError* err = nil;
+    CGImageRef cg = [gen copyCGImageAtTime: CMTimeMakeWithSeconds (timeSeconds, 600) actualTime: nil error: &err];
+    juce::Image img;
+    if (cg != nullptr)
+    {
+        const int w = (int) CGImageGetWidth (cg), h = (int) CGImageGetHeight (cg);
+        if (w > 0 && h > 0)
+        {
+            img = juce::Image (juce::Image::ARGB, w, h, true);
+            juce::Image::BitmapData bd (img, juce::Image::BitmapData::readWrite);
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            CGContextRef ctx = CGBitmapContextCreate (bd.data, (size_t) w, (size_t) h, 8, (size_t) bd.lineStride, cs,
+                                                      kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+            if (ctx != nullptr) { CGContextDrawImage (ctx, CGRectMake (0, 0, w, h), cg); CGContextRelease (ctx); }
+            CGColorSpaceRelease (cs);
+        }
+        CGImageRelease (cg);
+    }
+    [gen release];
+    return img;
+}
+
 double VideoView::probeDurationSeconds (const juce::File& file)
 {
     NSString* path = [NSString stringWithUTF8String: file.getFullPathName().toRawUTF8()];
