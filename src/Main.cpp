@@ -2542,8 +2542,11 @@ private:
 
     //==========================================================================
     // Project save / open. A ".lbproj" bundle = project.json + a media/ folder of copied files.
+    using CopyJob = std::pair<juce::File, juce::File>;   // (source, destination)
+
     juce::String copyMedia (const juce::File& src, const juce::File& mediaDir,
-                            std::map<juce::String, juce::String>& seen, bool& allOk, bool doCopy = true)
+                            std::map<juce::String, juce::String>& seen, bool& allOk, bool doCopy = true,
+                            std::vector<CopyJob>* queue = nullptr)
     {
         if (! src.existsAsFile()) { allOk = false; return src.getFullPathName(); }
         if (! doCopy) return src.getFullPathName();   // autosave/recovery: reference originals (no copy)
@@ -2554,20 +2557,25 @@ private:
         const juce::String destName = src.getFileNameWithoutExtension() + "_"
             + juce::String::toHexString ((juce::int64) (key.hashCode64() & 0xffffffLL)) + src.getFileExtension();
         const juce::File dest = mediaDir.getChildFile (destName);
+        const juce::String result = "media/" + destName;
 
-        bool copied = true;
-        if (! (dest.existsAsFile() && dest.getSize() == src.getSize()))
-            copied = src.copyFileTo (dest);
-
-        const juce::String result = copied ? ("media/" + destName) : key;   // on failure, keep referencing the original
-        if (! copied) allOk = false;
+        if (queue != nullptr)            // defer the actual file copy to a worker thread (non-freezing save)
+        {
+            queue->push_back ({ src, dest });
+        }
+        else                             // synchronous copy
+        {
+            bool copied = (dest.existsAsFile() && dest.getSize() == src.getSize()) || src.copyFileTo (dest);
+            if (! copied) { allOk = false; seen[key] = key; return key; }
+        }
         seen[key] = result;
         return result;
     }
 
     // Serialize the whole project to a var. doCopy=true copies media into mediaDir (for .lbproj);
-    // doCopy=false references the original file paths (for autosave/recovery).
-    juce::var buildProjectVar (const juce::File& mediaDir, bool doCopy, bool& allOk)
+    // doCopy=false references the original file paths (for autosave/recovery). If queue is given,
+    // media copies are deferred into it (the caller copies on a worker thread).
+    juce::var buildProjectVar (const juce::File& mediaDir, bool doCopy, bool& allOk, std::vector<CopyJob>* queue = nullptr)
     {
         std::map<juce::String, juce::String> seen;
         auto* root = new juce::DynamicObject();
@@ -2584,7 +2592,7 @@ private:
         {
             auto* go = new juce::DynamicObject();
             go->setProperty ("name", g->name);
-            go->setProperty ("video", copyMedia (g->file, mediaDir, seen, allOk, doCopy));
+            go->setProperty ("video", copyMedia (g->file, mediaDir, seen, allOk, doCopy, queue));
             go->setProperty ("duration", g->duration);
             go->setProperty ("expanded", g->expanded);
             go->setProperty ("videoMute", g->videoMute);
@@ -2599,7 +2607,7 @@ private:
             {
                 auto* to = new juce::DynamicObject();
                 to->setProperty ("name", t->name);
-                to->setProperty ("file", copyMedia (t->file, mediaDir, seen, allOk, doCopy));
+                to->setProperty ("file", copyMedia (t->file, mediaDir, seen, allOk, doCopy, queue));
                 to->setProperty ("sourceLength", t->sourceLength);
                 to->setProperty ("mute", t->mute);
                 to->setProperty ("solo", t->solo);
@@ -2658,13 +2666,30 @@ private:
                 const juce::File media = dir.getChildFile ("media");
                 if (! media.createDirectory().wasOk()) { titleLabel.setText ("Save failed: can't create media folder.", juce::dontSendNotification); return; }
 
-                bool allOk = true;
-                const juce::var rv = buildProjectVar (media, true, allOk);
-                const bool wrote = dir.getChildFile ("project.json").replaceWithText (juce::JSON::toString (rv));
-                clearRecovery();   // a real save supersedes the autosave
-                if (! wrote)      titleLabel.setText ("Save failed: couldn't write project.json.", juce::dontSendNotification);
-                else if (! allOk) titleLabel.setText ("Saved (some media kept by reference): " + dir.getFileName(), juce::dontSendNotification);
-                else              titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
+                bool present = true;                                   // build the JSON on the message thread (fast),
+                std::vector<CopyJob> queue;                            // but defer the heavy media copy to a worker
+                const juce::var rv = buildProjectVar (media, true, present, &queue);
+                const juce::String json = juce::JSON::toString (rv);
+                const juce::File projFile = dir.getChildFile ("project.json");
+
+                titleLabel.setText ("Saving...", juce::dontSendNotification);
+                auto a = alive;
+                std::thread ([this, a, queue, json, projFile, dir, present]
+                {
+                    bool allOk = present;
+                    for (const auto& job : queue)
+                        if (! (job.second.existsAsFile() && job.second.getSize() == job.first.getSize()))
+                            if (! job.first.copyFileTo (job.second)) allOk = false;
+                    const bool wrote = projFile.replaceWithText (json);
+                    juce::MessageManager::callAsync ([this, a, wrote, allOk, dir]
+                    {
+                        if (! a->load()) return;
+                        clearRecovery();   // a real save supersedes the autosave
+                        if (! wrote)      titleLabel.setText ("Save failed: couldn't write project.json.", juce::dontSendNotification);
+                        else if (! allOk) titleLabel.setText ("Saved (some media missing/kept by reference): " + dir.getFileName(), juce::dontSendNotification);
+                        else              titleLabel.setText ("Saved: " + dir.getFileName(), juce::dontSendNotification);
+                    });
+                }).detach();
             });
     }
 
