@@ -640,6 +640,7 @@ public:
         auto a = alive; auto reg = procReg;
         auto proc = std::make_shared<juce::ChildProcess>();
         reg->add (proc);                                       // killable on quit
+        stemProc = proc; splitCancelled = false; splitElapsedTicks = 0;
         std::thread ([this, a, reg, proc, src, outDir, sixStem, g, baseName, clips]
         {
             juce::String err; juce::Array<juce::File> stems;
@@ -649,7 +650,7 @@ public:
             {
                 if (! a->load()) return;
                 splitting = false;
-                if (! ok) { titleLabel.setText ("Stem split failed: " + err, juce::dontSendNotification); return; }
+                if (! ok) { titleLabel.setText (splitCancelled ? "Stem split cancelled" : ("Stem split failed: " + err), juce::dontSendNotification); return; }
                 int first = -1;
                 for (auto& f : stems)
                 {
@@ -2402,6 +2403,7 @@ private:
         juce::PopupMenu m;
         m.addItem (7, "Split into Stems - 6 (vocals/drums/bass/guitar/piano/other)", ! splitting);
         m.addItem (8, "Split into Stems - 4 (vocals/drums/bass/other)", ! splitting);
+        if (splitting) m.addItem (12, "Cancel Stem Split");
         m.addSeparator();
         m.addSubMenu ("Insert effect", insert);
 
@@ -2429,6 +2431,7 @@ private:
             if      (r == 1)    deleteTrack (g, t);
             else if (r == 7)    splitTrackIntoStems (g, t, true);
             else if (r == 8)    splitTrackIntoStems (g, t, false);
+            else if (r == 12)   cancelStemSplit();
             else if (r == 5)    startPluginScan();
             else if (r == 6)    openPluginListWindow();
             else if (r >= 2001 && r <= 2006) { audioEngine.addNativeEffect (engineId, r - 2001); openPluginEditor (engineId, audioEngine.trackPluginCount (engineId) - 1); }
@@ -2958,9 +2961,19 @@ private:
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override { timeline.repaint(); }
 
+    void cancelStemSplit()
+    {
+        splitCancelled = true;
+        if (auto p = stemProc.lock()) p->kill();
+        titleLabel.setText ("Cancelling stem split...", juce::dontSendNotification);
+    }
+
     void timerCallback() override
     {
         if (++autosaveCounter >= 1800) { autosaveCounter = 0; autosaveTick(); }   // autosave every ~60 s
+
+        if (splitting && (++splitElapsedTicks % 30 == 0))   // heartbeat so a multi-minute split doesn't look frozen
+            titleLabel.setText ("Splitting stems... " + juce::String (splitElapsedTicks / 30) + " s  (right-click the track to cancel)", juce::dontSendNotification);
 
         if (mixerVisible) mixerView.updateMeters();
 
@@ -3061,6 +3074,9 @@ private:
     bool scanning = false;
     bool pluginsScanned = false;
     bool splitting = false;   // a stem split is in progress (offline render on a worker thread)
+    std::weak_ptr<juce::ChildProcess> stemProc;   // the running Demucs process (for cancel)
+    bool splitCancelled = false;
+    int  splitElapsedTicks = 0;
     bool installing = false;  // the one-time Demucs setup is running
     int  ptEditMode = 1;      // Pro Tools edit mode: 0 Shuffle, 1 Slip, 2 Spot, 3 Grid
     AudioClip clipboardClip;  // copy/paste clipboard
