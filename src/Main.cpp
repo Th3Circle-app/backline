@@ -192,7 +192,7 @@ public:
         addChildComponent (logicBar);
 
         logicInspector.setEngine (&audioEngine);
-        logicInspector.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); if (mixerVisible) mixerView.syncFromModel(); } };
+        logicInspector.onVolume = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         logicInspector.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); if (mixerVisible) mixerView.syncFromModel(); } };
         logicInspector.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
         logicInspector.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); } };
@@ -264,7 +264,7 @@ public:
         timeline.onTrackMute     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.mute = ! tr.mute; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
         timeline.onTrackSolo     = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.solo = ! tr.solo; applyMixGains(); timeline.repaint(); mixerView.syncFromModel(); } };
         timeline.onTrackRecord   = [this] (int g, int t) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.recordArm = ! tr.recordArm; timeline.repaint(); } };
-        timeline.onTrackVolume   = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); if (mixerVisible) mixerView.syncFromModel(); refreshInspector(); } };
+        timeline.onTrackVolume   = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         timeline.onTrackPan      = [this] (int g, int t, float p) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->pan = p; audioEngine.setTrackPan (groups[(size_t) g]->tracks[(size_t) t]->engineId, p); timeline.repaint(); if (mixerVisible) mixerView.syncFromModel(); refreshInspector(); } };
         timeline.onVideoMute     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoMute = ! groups[(size_t) g]->videoMute; applyMixGains(); timeline.repaint(); } };
         timeline.onVideoSolo     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoSolo = ! groups[(size_t) g]->videoSolo; applyMixGains(); timeline.repaint(); } };
@@ -293,7 +293,7 @@ public:
         addAndMakeVisible (timelineViewport);
 
         mixerView.setEngine (&audioEngine);
-        mixerView.onVolume = [this] (int g, int t, float v) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->volume = v; updateTrackGain (g, t); } };
+        mixerView.onVolume = [this] (int g, int t, float v) { changeTrackVolume (g, t, v); };
         mixerView.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.pan = p; audioEngine.setTrackPan (tr.engineId, p); } };
         mixerView.onMute   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->mute = b; applyMixGains(); timeline.repaint(); } };
         mixerView.onSolo   = [this] (int g, int t, bool b)  { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->solo = b; applyMixGains(); timeline.repaint(); } };
@@ -968,6 +968,30 @@ private:
     }
 
     // Single-track gain update for a fader drag: one engine call instead of re-setting every track.
+    static void writeAutoPoint (AudioTrack& tr, double time, float value)
+    {
+        for (auto& p : tr.volumeAuto) if (std::abs (p.time - time) < 0.08) { p.value = value; return; }   // thin to ~1 point / 80 ms
+        tr.volumeAuto.push_back ({ time, value });
+        std::sort (tr.volumeAuto.begin(), tr.volumeAuto.end(), [] (const AutoPoint& a, const AutoPoint& b) { return a.time < b.time; });
+    }
+    // Central volume-change path: sets the fader and, in Latch automation while playing, writes the ride into the envelope.
+    void changeTrackVolume (int g, int t, float v)
+    {
+        if (! validTrack (g, t)) return;
+        auto* tr = groups[(size_t) g]->tracks[(size_t) t].get();
+        tr->volume = v;
+        updateTrackGain (g, t);
+        if (autoMode == 1 && automationVisible && playing && g == activeGroup)
+        {
+            writeAutoPoint (*tr, playhead, v);
+            std::vector<std::pair<double, float>> env; for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });
+            audioEngine.setTrackAutomation (tr->engineId, env, tr->automationOn);
+            timeline.repaint();
+        }
+        if (mixerVisible) mixerView.syncFromModel();
+        refreshInspector();
+    }
+
     void updateTrackGain (int g, int t)
     {
         if (g != activeGroup || ! validTrack (g, t)) return;
@@ -1937,6 +1961,7 @@ private:
             m.addItem (9050, mixerVisible ? "Hide Mixer" : "Show Mixer");
             m.addCommandItem (&commandManager, LSCmd::ZoomFit);
             m.addCommandItem (&commandManager, LSCmd::ToggleAutomation);
+            m.addItem (9062, "Automation: Latch (write fader rides)", automationVisible, autoMode == 1);
             m.addSeparator();
             m.addCommandItem (&commandManager, LSCmd::ToggleSnap);
             m.addItem (9061, "Snap to Frames", true, frameSnapOn);
@@ -1999,6 +2024,9 @@ private:
             case 9078: applyFade (2); break;
             case 9098: openHelpWindow(); break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
+            case 9062: autoMode = (autoMode == 1 ? 0 : 1);
+                       titleLabel.setText (autoMode == 1 ? "Automation: Latch - move a fader while playing to write the ride"
+                                                         : "Automation: Read", juce::dontSendNotification); break;
             case 9061: frameSnapOn = ! frameSnapOn; timeline.setFrameSnap (frameSnapOn);
                        titleLabel.setText (frameSnapOn ? "Snap to frames: on" : "Snap to frames: off", juce::dontSendNotification); break;
             case 9050: toggleMixer(); break;
@@ -3133,6 +3161,7 @@ private:
     int       autosaveCounter = 0;         // timer ticks since the last autosave
     double    recordStartTime = 0.0;       // playhead position where recording began
     int       recordTicks = 0;             // timer ticks since recording started (for the heartbeat)
+    int       autoMode = 0;                // 0 = Read, 1 = Latch (write fader rides into the envelope)
 
     MixerView mixerView;
     bool      mixerVisible = false;
