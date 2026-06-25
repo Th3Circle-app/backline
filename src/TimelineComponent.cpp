@@ -927,6 +927,7 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 
         if (showAutomation)   // automation mode: click adds/moves a breakpoint, double-click deletes
         {
+            if (onEditBegin) onEditBegin();   // one undo step per automation gesture
             const auto* at = (*groups)[(size_t) hit->group]->tracks[(size_t) hit->track].get();
             dragAuto = at->volumeAuto;
             dragAutoGroup = hit->group; dragAutoTrack = hit->track; dragAutoRowY = hit->y;

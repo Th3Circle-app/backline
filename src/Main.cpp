@@ -29,7 +29,9 @@ static std::vector<double> varToDoubles (const juce::var& v) { std::vector<doubl
 
 struct EditSnapshot
 {
-    struct TrackS { bool mute = false, solo = false; std::vector<AudioClip> clips; };
+    struct TrackS { bool mute = false, solo = false; float volume = 1.0f, pan = 0.0f, send = 0.0f;
+                    int mixGroup = 0; bool automationOn = false;
+                    std::vector<AudioClip> clips; std::vector<AutoPoint> volumeAuto; };
     struct GroupS { bool vMute = false, vSolo = false; std::vector<TrackS> tracks; };
     std::vector<GroupS> groups;
     bool loopEnabled = false; double loopStart = 0.0, loopEnd = 0.0;
@@ -297,7 +299,7 @@ public:
         mixerView.onPan    = [this] (int g, int t, float p) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.pan = p; audioEngine.setTrackPan (tr.engineId, p); } };
         mixerView.onMute   = [this] (int g, int t, bool b)  { setTrackMute (g, t, b); };
         mixerView.onSolo   = [this] (int g, int t, bool b)  { setTrackSolo (g, t, b); };
-        mixerView.onGroupChange = [this] (int g, int t, int gid) { if (validTrack (g, t)) groups[(size_t) g]->tracks[(size_t) t]->mixGroup = gid; };
+        mixerView.onGroupChange = [this] (int g, int t, int gid) { if (validTrack (g, t)) { pushUndo(); groups[(size_t) g]->tracks[(size_t) t]->mixGroup = gid; } };
         mixerView.onFxMenu = [this] (int g, int t) { showTrackMenu (g, t); };
         mixerView.onSelect = [this] (int g, int t) { selGroup = g; selTrack = t; selClip = -1; timeline.setSelection (g, t, -1); };
         mixerView.onMasterVolume = [this] (float v) { audioEngine.setMasterGain (v); };
@@ -2618,6 +2620,8 @@ private:
             for (auto& t : g->tracks)
             {
                 EditSnapshot::TrackS ts; ts.mute = t->mute; ts.solo = t->solo; ts.clips = t->clips;
+                ts.volume = t->volume; ts.pan = t->pan; ts.send = t->send; ts.mixGroup = t->mixGroup;
+                ts.automationOn = t->automationOn; ts.volumeAuto = t->volumeAuto;
                 gs.tracks.push_back (std::move (ts));
             }
             s.groups.push_back (std::move (gs));
@@ -2639,9 +2643,17 @@ private:
             g->videoMute = gs.vMute; g->videoSolo = gs.vSolo;
             for (size_t ti = 0; ti < g->tracks.size(); ++ti)
             {
-                g->tracks[ti]->mute  = gs.tracks[ti].mute;
-                g->tracks[ti]->solo  = gs.tracks[ti].solo;
-                g->tracks[ti]->clips = gs.tracks[ti].clips;
+                auto& tr = *g->tracks[ti]; const auto& ts = gs.tracks[ti];
+                tr.mute = ts.mute; tr.solo = ts.solo; tr.clips = ts.clips;
+                tr.volume = ts.volume; tr.pan = ts.pan; tr.send = ts.send;
+                tr.mixGroup = ts.mixGroup; tr.automationOn = ts.automationOn; tr.volumeAuto = ts.volumeAuto;
+                if (tr.engineId >= 0)   // push the restored mix state to the engine
+                {
+                    audioEngine.setTrackPan (tr.engineId, tr.pan);
+                    audioEngine.setTrackSend (tr.engineId, tr.send);
+                    std::vector<std::pair<double, float>> env; for (auto& p : tr.volumeAuto) env.push_back ({ p.time, p.value });
+                    audioEngine.setTrackAutomation (tr.engineId, env, tr.automationOn);
+                }
             }
         }
         loopEnabled = s.loopEnabled; loopStart = s.loopStart; loopEnd = s.loopEnd;
@@ -2663,6 +2675,8 @@ private:
         timeline.setSelection (selGroup, selTrack, selClip);
         timeline.setPlayhead (playhead);
         timeline.repaint();
+        if (mixerVisible) mixerView.syncFromModel();
+        refreshInspector();
     }
 
     void pushUndo()
