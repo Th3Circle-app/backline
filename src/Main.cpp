@@ -430,6 +430,7 @@ public:
         if (activeGroup < 0) activateGroup (newIdx);
         else                 { resized(); timeline.repaint(); }
 
+        importVideoAudioTrack (newIdx, f);   // expose the film's own audio as a track (waveform + fader + FX)
         detectCutsFor (newIdx);
     }
 
@@ -557,6 +558,33 @@ public:
         if (added) { resized(); timeline.repaint(); }
         if (needAudioHome && added == 0)
             titleLabel.setText ("Add a video first, then drag songs onto it", juce::dontSendNotification);
+    }
+
+    // Add the imported film's own audio as a track (decoded from the video file) so it has
+    // a waveform, fader, pan and FX like any track. Quiet if the video has no audio.
+    void importVideoAudioTrack (int g, const juce::File& f)
+    {
+        if (! validGroup (g)) return;
+        double len = 0.0;
+        const int id = audioEngine.addTrack (f, len);   // CoreAudioFormat decodes mov/mp4 audio
+        if (id < 0 || len <= 0.0) return;               // no decodable audio -> skip
+
+        auto tr = std::make_unique<AudioTrack>();
+        tr->name = "Film Audio";
+        tr->file = f;
+        tr->engineId = id;
+        tr->sourceLength = len;
+        tr->clips.push_back ({ 0.0, 0.0, len });
+        tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
+        tr->thumb->addChangeListener (this);
+        tr->thumb->setSource (new juce::FileInputSource (f));
+        groups[(size_t) g]->tracks.insert (groups[(size_t) g]->tracks.begin(), std::move (tr));   // film audio = top track
+        groups[(size_t) g]->videoMute = true;           // engine plays the film audio; mute AVPlayer to avoid doubling
+
+        auto* nt = groups[(size_t) g]->tracks.front().get();
+        audioEngine.setTrackClips (nt->engineId, (g == activeGroup) ? nt->clips : std::vector<AudioClip>{});
+        nt->beatMarkers = audioEngine.computeTrackOnsets (nt->engineId);
+        if (g == activeGroup) { applyMixGains(); refreshMixer(); resized(); timeline.repaint(); }
     }
 
     void addTrackFromFile (int g, const juce::File& f)
