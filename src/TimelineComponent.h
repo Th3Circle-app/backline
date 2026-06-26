@@ -59,6 +59,8 @@ public:
     std::function<void (int)>                      onVideoMute;     // group
     std::function<void (int)>                      onVideoSolo;     // group
     std::function<void (int)>                      onActivateGroup; // group
+    std::function<void (int, int, int)>            onTrackReorder;  // group, fromIndex, toIndex
+    std::function<void (int, int)>                 onGroupReorder;  // fromIndex, toIndex
     std::function<void()>                          onAddVideo;
     std::function<void (bool, double, double)>      onLoopChanged;
     std::function<void()>                           onZoomChanged;   // zoom changed -> parent should resize the timeline
@@ -81,7 +83,7 @@ private:
     { const float pad = 5.0f, hh = (float) rowHeight - 2.0f * pad; return (float) rowY + (float) rowHeight - pad - juce::jlimit (0.0f, 1.0f, v / 1.4f) * hh; }
     float autoValFromY (int rowY, float y) const
     { const float pad = 5.0f, hh = juce::jmax (1.0f, (float) rowHeight - 2.0f * pad); return juce::jlimit (0.0f, 1.4f, ((float) rowY + (float) rowHeight - pad - y) / hh * 1.4f); }
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain, AutoPt };
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain, AutoPt, ReorderTrack, ReorderGroup };
     static constexpr float kClipGainRange = 18.0f;   // +/- dB mapped across the clip height
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
@@ -115,8 +117,10 @@ private:
     Drag      dragMode = Drag::None;
     int       dragGroup = -1, dragTrack = -1, dragClip = -1;
     AudioClip dragStartClip;
-    int       dragStartX = 0;
+    int       dragStartX = 0, dragStartY = 0;
     float     dragStartPan = 0.0f;
+    int       reorderTo = -1;          // target index while dragging a header to reorder
+    bool      reorderActive = false;   // a reorder drag has passed the move threshold
     juce::Rectangle<float> dragClipRect;   // the dragged clip's rect (for vertical clip-gain mapping)
     juce::Rectangle<int> dragVBox;     // header-volume slider track being dragged
     double    dragPps = 0.0, frozenLen = 0.0;

@@ -705,6 +705,22 @@ void TimelineComponent::paint (juce::Graphics& g)
             g.fillPath (tri);
         }
     }
+
+    if (reorderActive)   // drop indicator while reordering a track/group header
+    {
+        int y = -1;
+        for (const auto& row : rows)
+        {
+            if (dragMode == Drag::ReorderTrack && row.kind == Row::Audio && row.group == dragGroup && row.track == reorderTo) { y = row.y; break; }
+            if (dragMode == Drag::ReorderGroup && row.kind == Row::Video && row.group == reorderTo) { y = row.y; break; }
+        }
+        if (y >= 0)
+        {
+            g.setColour (skin.accent);
+            g.fillRect (0, y - 1, w, 3);
+            g.fillEllipse (2.0f, (float) y - 4.0f, 8.0f, 8.0f);
+        }
+    }
 }
 
 //==============================================================================
@@ -853,6 +869,8 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
             if (mBox (hit->y).contains (e.getPosition())) { if (onVideoMute) onVideoMute (hit->group); return; }
             if (sBox (hit->y).contains (e.getPosition())) { if (onVideoSolo) onVideoSolo (hit->group); return; }
             if (onActivateGroup) onActivateGroup (hit->group);
+            dragMode = Drag::ReorderGroup; dragGroup = hit->group;   // drag the video header to reorder groups
+            reorderTo = hit->group; dragStartY = e.y; reorderActive = false;
         }
         else if (hit->kind == Row::Audio)
         {
@@ -874,6 +892,8 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
             }
             if (onActivateGroup) onActivateGroup (hit->group);
             if (onClipSelected)  onClipSelected (hit->group, hit->track, -1);
+            dragMode = Drag::ReorderTrack; dragGroup = hit->group; dragTrack = hit->track;   // drag the header to reorder tracks
+            reorderTo = hit->track; dragStartY = e.y; reorderActive = false;
         }
         else if (hit->kind == Row::Import) { if (onImportTrack) onImportTrack (hit->group); }
         else if (hit->kind == Row::AddVideo) { if (onAddVideo) onAddVideo(); }
@@ -1026,6 +1046,33 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
 {
     if (groups == nullptr) return;
+
+    if (dragMode == Drag::ReorderTrack)   // drag a track header up/down to reorder within its group
+    {
+        if (! reorderActive && std::abs (e.y - dragStartY) < 6) return;
+        reorderActive = true;
+        int idx = 0;
+        for (const auto& row : buildRows())
+            if (row.kind == Row::Audio && row.group == dragGroup && e.y > row.y + row.h / 2) ++idx;
+        const int count = (dragGroup >= 0 && dragGroup < numGroups()) ? (int) (*groups)[(size_t) dragGroup]->tracks.size() : 0;
+        reorderTo = juce::jlimit (0, juce::jmax (0, count - 1), idx);
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        repaint();
+        return;
+    }
+    if (dragMode == Drag::ReorderGroup)   // drag a video header up/down to reorder groups
+    {
+        if (! reorderActive && std::abs (e.y - dragStartY) < 6) return;
+        reorderActive = true;
+        int idx = 0;
+        for (const auto& row : buildRows())
+            if (row.kind == Row::Video && e.y > row.y + row.h / 2) ++idx;
+        reorderTo = juce::jlimit (0, juce::jmax (0, numGroups() - 1), idx);
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        repaint();
+        return;
+    }
+
     if (dragMode == Drag::HeaderVol)
     {
         const float vn = juce::jlimit (0.0f, 1.0f, (float) (e.x - dragVBox.getX()) / (float) juce::jmax (1, dragVBox.getWidth()));
@@ -1144,6 +1191,27 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
 
 void TimelineComponent::mouseUp (const juce::MouseEvent&)
 {
+    if (dragMode == Drag::ReorderTrack)
+    {
+        const int g = dragGroup, from = dragTrack, to = reorderTo;
+        const bool did = reorderActive;
+        dragMode = Drag::None; reorderActive = false; reorderTo = -1;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        if (did && to != from && onTrackReorder) onTrackReorder (g, from, to);
+        repaint();
+        return;
+    }
+    if (dragMode == Drag::ReorderGroup)
+    {
+        const int from = dragGroup, to = reorderTo;
+        const bool did = reorderActive;
+        dragMode = Drag::None; reorderActive = false; reorderTo = -1;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        if (did && to != from && onGroupReorder) onGroupReorder (from, to);
+        repaint();
+        return;
+    }
+
     if (dragMode == Drag::HeaderVol || dragMode == Drag::HeaderPan) { dragMode = Drag::None; return; }
 
     if (dragMode == Drag::Loop)

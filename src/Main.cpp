@@ -271,6 +271,36 @@ public:
         timeline.onVideoMute     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoMute = ! groups[(size_t) g]->videoMute; applyMixGains(); timeline.repaint(); } };
         timeline.onVideoSolo     = [this] (int g) { if (validGroup (g)) { groups[(size_t) g]->videoSolo = ! groups[(size_t) g]->videoSolo; applyMixGains(); timeline.repaint(); } };
         timeline.onActivateGroup = [this] (int g) { activateGroup (g); };
+        timeline.onTrackReorder  = [this] (int g, int from, int to)
+        {
+            if (! validGroup (g)) return;
+            auto& v = groups[(size_t) g]->tracks;
+            if (from < 0 || from >= (int) v.size() || to < 0 || to >= (int) v.size() || from == to) return;
+            auto moved = std::move (v[(size_t) from]);
+            v.erase (v.begin() + from);
+            v.insert (v.begin() + juce::jlimit (0, (int) v.size(), to), std::move (moved));
+            clearHistory();   // index-based undo can't represent a reorder; reordering is an undo boundary
+            selGroup = g; selTrack = to; selClip = -1;
+            refreshMixer();
+            timeline.setSelection (selGroup, selTrack, selClip);
+            resized(); timeline.repaint();
+        };
+        timeline.onGroupReorder  = [this] (int from, int to)
+        {
+            if (from < 0 || from >= (int) groups.size() || to < 0 || to >= (int) groups.size() || from == to) return;
+            auto* activePtr = validGroup (activeGroup) ? groups[(size_t) activeGroup].get() : nullptr;
+            auto moved = std::move (groups[(size_t) from]);
+            groups.erase (groups.begin() + from);
+            groups.insert (groups.begin() + juce::jlimit (0, (int) groups.size(), to), std::move (moved));
+            clearHistory();
+            if (activePtr != nullptr)
+                for (int i = 0; i < (int) groups.size(); ++i) if (groups[(size_t) i].get() == activePtr) { activeGroup = i; break; }
+            selGroup = activeGroup; selTrack = -1; selClip = -1;
+            timeline.setActiveGroup (activeGroup);
+            timeline.setSelection (selGroup, selTrack, selClip);
+            refreshMixer();
+            resized(); timeline.repaint();
+        };
         timeline.onAddVideo      = [this] { openAddVideo(); };
         timeline.onLoopChanged   = [this] (bool en, double s, double e)
         {
