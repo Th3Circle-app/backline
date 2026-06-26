@@ -154,10 +154,11 @@ double TimelineComponent::timeForX (double x) const
     return juce::jlimit (0.0, timelineLength(), (x - headerW) / pps);
 }
 
-juce::Rectangle<float> TimelineComponent::videoClipRectAt (int rowYpos, double durationSeconds) const
+juce::Rectangle<float> TimelineComponent::videoClipRectAt (int rowYpos, double startSeconds, double durationSeconds) const
 {
-    const float right = juce::jmin ((float) xForTime (durationSeconds), (float) getWidth());
-    return { (float) headerW, (float) (rowYpos + 8), juce::jmax (0.0f, right - (float) headerW), (float) (rowHeight - 16) };
+    const float left  = juce::jmax ((float) headerW, (float) xForTime (startSeconds));
+    const float right = juce::jmin ((float) xForTime (startSeconds + durationSeconds), (float) getWidth());
+    return { left, (float) (rowYpos + 8), juce::jmax (0.0f, right - left), (float) (rowHeight - 16) };
 }
 
 juce::Rectangle<float> TimelineComponent::clipRectAt (int rowYpos, const AudioClip& c) const
@@ -361,7 +362,7 @@ void TimelineComponent::paint (juce::Graphics& g)
                 drawMS (g, row.y, grp->videoMute, grp->videoSolo);
             }
 
-            auto clip = videoClipRectAt (row.y, grp->duration);
+            auto clip = videoClipRectAt (row.y, grp->videoOffset, grp->duration);
             if (clip.getWidth() > 1.0f)
             {
                 const auto base = active ? skin.videoClip.brighter (0.12f) : skin.videoClip.darker (0.12f);
@@ -948,6 +949,16 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
     if (hit->kind == Row::Video)
     {
         if (onActivateGroup) onActivateGroup (hit->group);   // clicking a video lane switches to it
+        const auto* g = (*groups)[(size_t) hit->group].get();
+        if (hit->group == activeGroup && ! g->videoLocked
+            && videoClipRectAt (hit->y, g->videoOffset, g->duration).contains (e.position))
+        {
+            dragMode = Drag::VideoMove; dragGroup = hit->group; dragStartX = e.x;
+            dragStartVideoOffset = g->videoOffset;
+            frozenLen = rawTimelineLength();
+            const int laneW = getWidth() - headerW;
+            dragPps = (frozenLen > 0.0 && laneW > 0) ? (double) laneW / frozenLen : pixelsPerSecond();
+        }
         return;
     }
 
@@ -1069,6 +1080,15 @@ void TimelineComponent::mouseDrag (const juce::MouseEvent& e)
             if (row.kind == Row::Video && e.y > row.y + row.h / 2) ++idx;
         reorderTo = juce::jlimit (0, juce::jmax (0, numGroups() - 1), idx);
         setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        repaint();
+        return;
+    }
+
+    if (dragMode == Drag::VideoMove)   // slide the film along the timeline
+    {
+        const double dt  = (dragPps > 0.0) ? (double) (e.x - dragStartX) / dragPps : 0.0;
+        const double off = juce::jmax (0.0, dragStartVideoOffset + dt);
+        if (onVideoOffset) onVideoOffset (dragGroup, off);
         repaint();
         return;
     }
@@ -1212,6 +1232,7 @@ void TimelineComponent::mouseUp (const juce::MouseEvent&)
         return;
     }
 
+    if (dragMode == Drag::VideoMove) { dragMode = Drag::None; return; }
     if (dragMode == Drag::HeaderVol || dragMode == Drag::HeaderPan) { dragMode = Drag::None; return; }
 
     if (dragMode == Drag::Loop)

@@ -301,6 +301,7 @@ public:
             refreshMixer();
             resized(); timeline.repaint();
         };
+        timeline.onVideoOffset   = [this] (int g, double off) { if (validGroup (g)) { groups[(size_t) g]->videoOffset = off; updateTimelineSize(); timeline.repaint(); } };
         timeline.onAddVideo      = [this] { openAddVideo(); };
         timeline.onLoopChanged   = [this] (bool en, double s, double e)
         {
@@ -1004,6 +1005,7 @@ private:
     VideoGroup* activeGroupPtr() { return validGroup (activeGroup) ? groups[(size_t) activeGroup].get() : nullptr; }
 
     double videoDur() const { return video.getDurationSeconds(); }
+    double activeVideoOffset() const { return validGroup (activeGroup) ? groups[(size_t) activeGroup]->videoOffset : 0.0; }
 
     double timelineLength()
     {
@@ -1111,9 +1113,10 @@ private:
         playhead = juce::jlimit (0.0, juce::jmax (0.0, timelineLength()), p);
         audioEngine.setPositionSeconds (playhead);
         if (playing && ! audioEngine.isPlaying()) audioEngine.play();
-        video.setPositionSeconds (playhead);
+        const double vt = playhead - activeVideoOffset();
+        video.setPositionSeconds (juce::jmax (0.0, vt));
         const double vd = videoDur();
-        if (playing && (vd <= 0.0 || playhead < vd - 0.001)) video.play();
+        if (playing && vt >= 0.0 && (vd <= 0.0 || vt < vd - 0.001)) video.play();
         timeline.setPlayhead (playhead);
     }
 
@@ -1133,9 +1136,10 @@ private:
         playing = true;
         audioEngine.setPositionSeconds (playhead);
         audioEngine.play();
-        video.setPositionSeconds (playhead);
+        const double vt = playhead - activeVideoOffset();
+        video.setPositionSeconds (juce::jmax (0.0, vt));
         const double vd = videoDur();
-        if (vd <= 0.0 || playhead < vd - 0.001) video.play();   // vd==0 => duration not loaded yet, start anyway
+        if (vt >= 0.0 && (vd <= 0.0 || vt < vd - 0.001)) video.play();   // vd==0 => duration not loaded yet, start anyway
         timeline.setPlayhead (playhead);
     }
 
@@ -2671,8 +2675,19 @@ private:
     {
         if (! validGroup (g)) return;
         juce::PopupMenu m;
+        const bool locked = groups[(size_t) g]->videoLocked;
+        m.addItem (2, locked ? "Unlock Film Position (allow sliding)" : "Lock Film Position");
+        if (groups[(size_t) g]->videoOffset > 0.0) m.addItem (3, "Reset Film to Start (offset 0)");
+        m.addSeparator();
         m.addItem (1, "Delete video");
-        m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r) { if (r == 1) deleteGroup (g); restoreKeyFocus(); });
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g] (int r)
+        {
+            if      (r == 1) deleteGroup (g);
+            else if (r == 2 && validGroup (g)) { groups[(size_t) g]->videoLocked = ! groups[(size_t) g]->videoLocked;
+                                                 titleLabel.setText (groups[(size_t) g]->videoLocked ? "Film locked" : "Film unlocked - drag it to slide", juce::dontSendNotification); }
+            else if (r == 3 && validGroup (g)) { groups[(size_t) g]->videoOffset = 0.0; updateTimelineSize(); timeline.repaint(); }
+            restoreKeyFocus();
+        });
     }
 
     //==========================================================================
@@ -2817,6 +2832,8 @@ private:
             go->setProperty ("expanded", g->expanded);
             go->setProperty ("videoMute", g->videoMute);
             go->setProperty ("videoSolo", g->videoSolo);
+            go->setProperty ("videoOffset", g->videoOffset);
+            go->setProperty ("videoLocked", g->videoLocked);
             go->setProperty ("cuts", doublesToVar (g->cutMarkers));
             juce::var marr;
             for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
@@ -3066,6 +3083,8 @@ private:
                 grp->expanded  = (bool)   gv.getProperty ("expanded", true);
                 grp->videoMute = (bool)   gv.getProperty ("videoMute", false);
                 grp->videoSolo = (bool)   gv.getProperty ("videoSolo", false);
+                grp->videoOffset = (double) gv.getProperty ("videoOffset", 0.0);
+                grp->videoLocked = (bool)   gv.getProperty ("videoLocked", true);
                 grp->cutMarkers = varToDoubles (gv["cuts"]);
                 if (auto* ma = gv["markers"].getArray())
                     for (auto& mv : *ma) grp->markers.push_back ({ (double) mv.getProperty ("t", 0.0), mv["name"].toString() });
@@ -3226,8 +3245,9 @@ private:
                     ph = loopStart;
                     audioEngine.setPositionSeconds (loopStart);
                     if (! audioEngine.isPlaying()) audioEngine.play();
-                    video.setPositionSeconds (loopStart);
-                    if (loopStart < vdur - 0.001) video.play();
+                    const double lvt = loopStart - activeVideoOffset();
+                    video.setPositionSeconds (juce::jmax (0.0, lvt));
+                    if (lvt >= 0.0 && lvt < vdur - 0.001) video.play();
                 }
             }
             else if ((tl > 0.0 && ph >= tl - 0.05) || ! audioEngine.isPlaying())
@@ -3239,11 +3259,13 @@ private:
 
             playhead = ph;
 
-            if (playing && video.isPlaying() && playhead < vdur - 0.05)
+            const double voff = activeVideoOffset();          // film may be slid later on the timeline
+            const double vtarget = playhead - voff;           // where the film should be
+            if (playing && video.isPlaying() && vtarget >= 0.0 && vtarget < vdur - 0.05)
             {
-                const double drift = video.getPositionSeconds() - playhead;          // +ve => video ahead of audio
-                if (std::abs (drift) > 0.35) video.setPositionSeconds (playhead);     // way off (e.g. after a scrub): hard re-lock
-                else                         video.setRate (juce::jlimit (0.90, 1.10, 1.0 - drift * 0.6));   // gentle rate chase -> frame-tight lock, no jumps
+                const double drift = video.getPositionSeconds() - vtarget;            // +ve => video ahead of audio
+                if (std::abs (drift) > 0.35) video.setPositionSeconds (juce::jmax (0.0, vtarget));   // way off: hard re-lock
+                else                         video.setRate (juce::jlimit (0.90, 1.10, 1.0 - drift * 0.6));   // gentle rate chase
             }
 
             if (! isScrubbing) timeline.setPlayhead (playhead);

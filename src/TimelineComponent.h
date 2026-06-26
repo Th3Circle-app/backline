@@ -61,6 +61,7 @@ public:
     std::function<void (int)>                      onActivateGroup; // group
     std::function<void (int, int, int)>            onTrackReorder;  // group, fromIndex, toIndex
     std::function<void (int, int)>                 onGroupReorder;  // fromIndex, toIndex
+    std::function<void (int, double)>              onVideoOffset;   // group, new film start offset (seconds)
     std::function<void()>                          onAddVideo;
     std::function<void (bool, double, double)>      onLoopChanged;
     std::function<void()>                           onZoomChanged;   // zoom changed -> parent should resize the timeline
@@ -83,7 +84,7 @@ private:
     { const float pad = 5.0f, hh = (float) rowHeight - 2.0f * pad; return (float) rowY + (float) rowHeight - pad - juce::jlimit (0.0f, 1.0f, v / 1.4f) * hh; }
     float autoValFromY (int rowY, float y) const
     { const float pad = 5.0f, hh = juce::jmax (1.0f, (float) rowHeight - 2.0f * pad); return juce::jlimit (0.0f, 1.4f, ((float) rowY + (float) rowHeight - pad - y) / hh * 1.4f); }
-    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain, AutoPt, ReorderTrack, ReorderGroup };
+    enum class Drag { None, Loop, Move, TrimLeft, TrimRight, HeaderVol, HeaderPan, FadeIn, FadeOut, ClipGain, AutoPt, ReorderTrack, ReorderGroup, VideoMove };
     static constexpr float kClipGainRange = 18.0f;   // +/- dB mapped across the clip height
     struct Row { enum Kind { Video, Audio, Import, AddVideo }; Kind kind; int group; int track; int y; int h; };
 
@@ -95,7 +96,7 @@ private:
     double pixelsPerSecond() const;
     double xForTime (double t) const;
     double timeForX (double x) const;
-    juce::Rectangle<float> videoClipRectAt (int rowYpos, double durationSeconds) const;
+    juce::Rectangle<float> videoClipRectAt (int rowYpos, double startSeconds, double durationSeconds) const;
     juce::Rectangle<float> clipRectAt (int rowYpos, const AudioClip&) const;
     juce::Rectangle<int>   mBox (int rowYpos) const;
     juce::Rectangle<int>   sBox (int rowYpos) const;
@@ -121,6 +122,7 @@ private:
     float     dragStartPan = 0.0f;
     int       reorderTo = -1;          // target index while dragging a header to reorder
     bool      reorderActive = false;   // a reorder drag has passed the move threshold
+    double    dragStartVideoOffset = 0.0;   // film offset at the start of a VideoMove drag
     juce::Rectangle<float> dragClipRect;   // the dragged clip's rect (for vertical clip-gain mapping)
     juce::Rectangle<int> dragVBox;     // header-volume slider track being dragged
     double    dragPps = 0.0, frozenLen = 0.0;
