@@ -61,5 +61,5 @@ struct VideoGroup
     std::vector<double> cutMarkers;    // scene-cut times on the timeline (seconds)
     std::vector<Marker> markers;       // user hit-point markers on the timeline
     double videoOffset = 0.0;          // where the film starts on the timeline (seconds); slide to offset picture vs music
-    bool   videoLocked = true;         // locked = the film can't be dragged (Scott's lock/unlock)
+    bool   videoLocked = false;        // locked = the film can't be dragged (Scott's lock/unlock); unlocked by default so you can grab it
 };

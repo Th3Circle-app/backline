@@ -805,6 +805,12 @@ void TimelineComponent::mouseMove (const juce::MouseEvent& e)
     const auto rows = buildRows();
     for (const auto& row : rows)
     {
+        if (row.kind == Row::Video && row.group == activeGroup && e.y >= row.y && e.y < row.y + row.h)
+        {
+            const auto* g = (*groups)[(size_t) row.group].get();
+            if (! g->videoLocked && videoClipRectAt (row.y, g->videoOffset, g->duration).contains (e.position))
+            { setMouseCursor (juce::MouseCursor::DraggingHandCursor); return; }   // grab to slide the film
+        }
         if (row.kind == Row::Audio && e.y >= row.y && e.y < row.y + row.h)
         {
             const auto* t = (*groups)[(size_t) row.group]->tracks[(size_t) row.track].get();
@@ -948,16 +954,16 @@ void TimelineComponent::mouseDown (const juce::MouseEvent& e)
 
     if (hit->kind == Row::Video)
     {
-        if (onActivateGroup) onActivateGroup (hit->group);   // clicking a video lane switches to it
         const auto* g = (*groups)[(size_t) hit->group].get();
-        if (hit->group == activeGroup && ! g->videoLocked
-            && videoClipRectAt (hit->y, g->videoOffset, g->duration).contains (e.position))
+        if (hit->group != activeGroup) { if (onActivateGroup) onActivateGroup (hit->group); return; }   // switch to it
+        if (! g->videoLocked && videoClipRectAt (hit->y, g->videoOffset, g->duration).contains (e.position))
         {
-            dragMode = Drag::VideoMove; dragGroup = hit->group; dragStartX = e.x;
+            dragMode = Drag::VideoMove; dragGroup = hit->group; dragStartX = e.x;   // grab the film to slide it
             dragStartVideoOffset = g->videoOffset;
             frozenLen = rawTimelineLength();
             const int laneW = getWidth() - headerW;
             dragPps = (frozenLen > 0.0 && laneW > 0) ? (double) laneW / frozenLen : pixelsPerSecond();
+            setMouseCursor (juce::MouseCursor::DraggingHandCursor);
         }
         return;
     }
