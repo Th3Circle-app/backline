@@ -829,11 +829,12 @@ public:
         logicInspector.setVisible (logic);
         ptBar.setVisible (pt);
         const bool generic = ! logic && ! pt;
+        const bool showButtons = generic || logic;   // Logic skin also gets the full top button row
         for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &videoButton })
-            c->setVisible (generic);
-        loopToggle.setVisible (generic);
-        snapToggle.setVisible (generic);
-        timeLabel.setVisible (generic);
+            c->setVisible (showButtons);
+        loopToggle.setVisible (showButtons);
+        snapToggle.setVisible (showButtons);
+        timeLabel.setVisible (generic);   // big time label only in Layback (Logic/PT have their own LCD)
     }
 
     // Logic: full-width LCD control bar on top, status line, tracks fill below.
@@ -846,6 +847,8 @@ public:
 
         auto status = area.removeFromTop (18);
         titleLabel.setBounds (status.reduced (10, 0));
+        layoutToolbarButtons (area.removeFromTop (32).reduced (8, 3));   // full top button row (Add Video/Project/Play/Loop/Snap/Video/Keys/Export)
+        area.removeFromTop (2);
         logicToolbar = area.removeFromTop (26);                 // local Edit / Functions / View row
         { const int y = logicToolbar.getY(), h = logicToolbar.getHeight(); const int x = logicToolbar.getX() + 210;
           logicMEdit = { x, y, 46, h }; logicMFunc = { x + 56, y, 78, h }; logicMView = { x + 144, y, 46, h }; }
@@ -886,24 +889,23 @@ public:
         timelineViewport.setBounds (r);                       // tracks fill the rest of the window
         viewerFrame = {};
 
-        openButton.setBounds (controls.removeFromLeft (104));
-        controls.removeFromLeft (8);
-        projectButton.setBounds (controls.removeFromLeft (80));
-        controls.removeFromLeft (8);
-        playButton.setBounds (controls.removeFromLeft (84));
-        controls.removeFromLeft (10);
-        loopToggle.setBounds (controls.removeFromLeft (66));
-        controls.removeFromLeft (8);
-        snapToggle.setBounds (controls.removeFromLeft (62));
-        controls.removeFromLeft (8);
-        videoButton.setBounds (controls.removeFromLeft (72));
-        controls.removeFromLeft (8);
-        keysButton.setBounds (controls.removeFromLeft (118));
-        controls.removeFromLeft (8);
-        exportButton.setBounds (controls.removeFromLeft (90));
-        timeLabel.setBounds  (controls.removeFromRight (150));
+        layoutToolbarButtons (controls);
 
         updateTimelineSize();
+    }
+
+    // Position the shared top button row (used by Layback + Logic skins).
+    void layoutToolbarButtons (juce::Rectangle<int> controls)
+    {
+        if (timeLabel.isVisible() && controls.getWidth() > 320) timeLabel.setBounds (controls.removeFromRight (150));
+        openButton.setBounds   (controls.removeFromLeft (104)); controls.removeFromLeft (8);
+        projectButton.setBounds(controls.removeFromLeft (80));  controls.removeFromLeft (8);
+        playButton.setBounds   (controls.removeFromLeft (84));  controls.removeFromLeft (10);
+        loopToggle.setBounds   (controls.removeFromLeft (66));  controls.removeFromLeft (8);
+        snapToggle.setBounds   (controls.removeFromLeft (62));  controls.removeFromLeft (8);
+        videoButton.setBounds  (controls.removeFromLeft (72));  controls.removeFromLeft (8);
+        keysButton.setBounds   (controls.removeFromLeft (118)); controls.removeFromLeft (8);
+        exportButton.setBounds (controls.removeFromLeft (90));
     }
 
     // Stacked DAW layout (Logic / Pro Tools): top control bar (transport left,
