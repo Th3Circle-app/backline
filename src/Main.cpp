@@ -341,6 +341,7 @@ public:
         mixerView.onBusFader     = [this] (int b, float v) { audioEngine.setBusGain (b, v); };
         mixerView.onBusMute      = [this] (int b, bool m)  { audioEngine.setBusMute (b, m); };
         mixerView.onBusFx        = [this] (int b) { showBusFxMenu (b); };
+        mixerView.onOutputMenu   = [this] (int g, int t) { showOutputMenu (g, t); };
         addChildComponent (mixerView);   // shown when toggled
 
         keysButton.onClick = [this] { showKeysMenu(); };
@@ -2722,6 +2723,25 @@ private:
         audioEngine.setTrackOutput (groups[(size_t) g]->tracks[(size_t) t]->engineId, out);
         refreshMixer();
         titleLabel.setText (out < 0 ? "Output -> Master" : ("Output -> " + audioEngine.busName (out)), juce::dontSendNotification);
+    }
+
+    // Output-routing menu (from the channel strip's output slot, Logic-style).
+    void showOutputMenu (int g, int t)
+    {
+        if (! validTrack (g, t)) return;
+        const int cur = groups[(size_t) g]->tracks[(size_t) t]->output;
+        juce::PopupMenu m;
+        m.addItem (7000, "Master", true, cur < 0);
+        for (int b = 0; b < audioEngine.busCount(); ++b) m.addItem (7001 + b, audioEngine.busName (b), true, cur == b);
+        m.addSeparator();
+        m.addItem (7100, "New Bus");
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r)
+        {
+            if      (r == 7000) setTrackOutputRoute (g, t, -1);
+            else if (r >= 7001 && r < 7100) setTrackOutputRoute (g, t, r - 7001);
+            else if (r == 7100) { const int nb = audioEngine.addBus ("Bus " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            restoreKeyFocus();
+        });
     }
 
     void openBusEditor (int b, int idx)

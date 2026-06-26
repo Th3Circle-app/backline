@@ -35,6 +35,8 @@ struct ChannelStrip : public juce::Component
     std::function<void()>       onBounceClick;       // master Bnc cell
     std::function<void (float)> onSendChange;        // FX-bus send level
     std::function<void (int)>   onGroupChange;       // mixer link group (cycles 0..4)
+    std::function<void()>       onOutputClick;       // output-routing slot (choose Master / bus)
+    juce::String                outputLabel { "Stereo Out" };   // current output destination shown in the slot
     bool  recArmed = false;
     float sendLevel = 0.0f;
     int   groupId = 0;
@@ -95,6 +97,7 @@ struct ChannelStrip : public juce::Component
         if (isMaster && ! isBus && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
         if (! isMaster && sendsRow.contains (e.getPosition())) { setSendFromX (e.x); return; }              // FX-bus send
         if (! isMaster && groupRow.contains (e.getPosition())) { groupId = (groupId + 1) % 5; if (onGroupChange) onGroupChange (groupId); repaint(); return; }   // cycle link group
+        if (! isMaster && ! isBus && outputRow.contains (e.getPosition())) { if (onOutputClick) onOutputClick(); return; }   // choose output bus
         if (! isMaster && ! riRow.isEmpty())
         {
             auto rl = riRow; auto rR = rl.removeFromLeft (rl.getWidth() / 2 - 1);   // R cell = left half
@@ -190,9 +193,18 @@ struct ChannelStrip : public juce::Component
             g.setColour (txt); g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
             g.drawText (t, b.toFloat().withTrimmedLeft (lpad), juce::Justification::centredLeft, true);
         };
-        rowSlot (inRow,     "In 1-2",     skin.text,  true,  false, true);   // routing rows are read-only labels for now
-        rowSlot (outputRow, "Stereo Out", skin.text,  false, false, true);
+        rowSlot (inRow,     "In 1-2",     skin.text,  true,  false, true);   // input routing: read-only label for now
         rowSlot (autoRow,   "Read",       juce::Colour (0xff5fbf6f), false, false, true);
+
+        if (! outputRow.isEmpty() && ! isMaster && ! isBus)   // output-routing slot (Logic-style), click to choose Master/bus
+        {
+            auto rf = outputRow.toFloat().reduced (2.0f, 1.0f);
+            g.setColour (skin.control.brighter (0.06f)); g.fillRoundedRectangle (rf, 3.0f);
+            g.setColour (skin.accent.withAlpha (0.55f));  g.drawRoundedRectangle (rf, 3.0f, 1.0f);
+            g.setColour (skin.text); g.setFont (juce::Font (juce::FontOptions().withHeight (9.5f)));
+            g.drawText (outputLabel, rf.withTrimmedLeft (6.0f), juce::Justification::centredLeft, true);
+        }
+        else rowSlot (outputRow, "Stereo Out", skin.text, false, false, true);
 
         if (! groupRow.isEmpty() && ! isMaster)   // mixer link group (click to cycle)
         {
@@ -305,6 +317,7 @@ public:
     std::function<void (int, float)>      onBusFader;   // (busIdx, gain)
     std::function<void (int, bool)>       onBusMute;    // (busIdx, muted)
     std::function<void (int)>             onBusFx;      // (busIdx) -> open bus FX menu
+    std::function<void (int, int)>        onOutputMenu; // (group, track) -> choose output (Master / bus)
 
     MixerView() = default;
 
@@ -371,6 +384,8 @@ public:
             s->mute.setToggleState (tr->mute, juce::dontSendNotification);
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
             s->sendLevel = tr->send;
+            s->outputLabel = (tr->output < 0) ? juce::String ("Stereo Out")
+                           : (engine != nullptr ? engine->busName (tr->output) : ("Bus " + juce::String (tr->output + 1)));
             s->repaint();
         }
     }
@@ -429,6 +444,8 @@ private:
             s->recArmed = tr->recordArm;
             s->sendLevel = tr->send;
             s->groupId = tr->mixGroup;
+            s->outputLabel = (tr->output < 0) ? juce::String ("Stereo Out")
+                           : (engine != nullptr ? engine->busName (tr->output) : ("Bus " + juce::String (tr->output + 1)));
         }
         else
         {
@@ -448,6 +465,7 @@ private:
         s->onBounceClick     = [this] { if (onBounce) onBounce(); };
         s->onSendChange      = [this, g2, t2] (float v) { if (onSend) onSend (g2, t2, v); };
         s->onGroupChange     = [this, g2, t2] (int gid) { if (onGroupChange) onGroupChange (g2, t2, gid); };
+        s->onOutputClick     = [this, g2, t2] { if (onOutputMenu) onOutputMenu (g2, t2); };
 
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));
