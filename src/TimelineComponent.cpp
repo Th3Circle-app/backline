@@ -96,6 +96,11 @@ double TimelineComponent::timelineLength() const
     return rawTimelineLength();
 }
 
+double TimelineComponent::workspaceLength() const   // a long scrollable/editable arrangement like Logic (content + headroom)
+{
+    return juce::jmax (rawTimelineLength() + 180.0, 300.0);
+}
+
 double TimelineComponent::pixelsPerSecond() const
 {
     const bool clipDragging = (dragMode == Drag::Move || dragMode == Drag::TrimLeft || dragMode == Drag::TrimRight);
@@ -110,8 +115,7 @@ double TimelineComponent::pixelsPerSecond() const
 
 int TimelineComponent::contentWidth() const
 {
-    const double len = rawTimelineLength();
-    return headerW + (int) std::ceil (len * pixelsPerSecond()) + 80;   // +tail so you can scroll past the end
+    return headerW + (int) std::ceil (workspaceLength() * pixelsPerSecond()) + 80;   // long workspace you can scroll into
 }
 
 void TimelineComponent::refitZoom()
@@ -151,7 +155,7 @@ double TimelineComponent::timeForX (double x) const
 {
     const auto pps = pixelsPerSecond();
     if (pps <= 0.0) return 0.0;
-    return juce::jlimit (0.0, timelineLength(), (x - headerW) / pps);
+    return juce::jlimit (0.0, workspaceLength(), (x - headerW) / pps);
 }
 
 juce::Rectangle<float> TimelineComponent::videoClipRectAt (int rowYpos, double startSeconds, double durationSeconds) const
@@ -235,15 +239,16 @@ void TimelineComponent::paint (juce::Graphics& g)
     const double tl = timelineLength();
 
     // ruler ticks (only meaningful when a group is active)
+    const double wl = workspaceLength();                       // grid extends across the long workspace, not just content
     if (tl > 0.0 && skin.barsRuler)
     {
         const double barLen = 2.0;                              // 120 BPM, 4/4 -> 1 bar = 2 s
         const int xEnd = (int) xForTime (tl);
-        g.setColour (juce::Colour (0xffb89c43));                // gold "used region" band over the ruler
+        g.setColour (juce::Colour (0xffb89c43));                // gold "used region" band over the ruler (content only)
         g.fillRect (headerW, 0, juce::jmax (0, xEnd - headerW), rulerHeight);
         g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f)));
         int bar = 0;
-        for (double t = 0.0; t <= tl + 1.0e-6; t += barLen, ++bar)
+        for (double t = 0.0; t <= wl + 1.0e-6; t += barLen, ++bar)
         {
             const int x = (int) xForTime (t);
             g.setColour (skin.windowBg.brighter (0.05f));      // faint bar gridline down the lanes
@@ -267,9 +272,9 @@ void TimelineComponent::paint (juce::Graphics& g)
     {
         const double niceSteps[] = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600 };
         double step = niceSteps[(int) (sizeof (niceSteps) / sizeof (double)) - 1];
-        for (double s : niceSteps) { if (tl / s <= 10.0) { step = s; break; } }
+        for (double s : niceSteps) { if (wl / s <= 14.0) { step = s; break; } }
         g.setFont (11.0f);
-        for (double t = 0.0; t <= tl + 1.0e-6; t += step)
+        for (double t = 0.0; t <= wl + 1.0e-6; t += step)
         {
             const int x = (int) xForTime (t);
             g.setColour (skin.ruler.brighter (0.10f));
@@ -398,10 +403,10 @@ void TimelineComponent::paint (juce::Graphics& g)
                     g.drawText (grp->name, clip.toNearestInt().reduced (7, 3), juce::Justification::topLeft, true);
                 }
 
-                for (double cm : grp->cutMarkers)   // detected scene cuts, drawn only on this video's clip
+                for (double cm : grp->cutMarkers)   // detected scene cuts, anchored to the film (follow its offset)
                 {
-                    const int cx = (int) xForTime (cm);
-                    if (cx > headerW && (float) cx <= clip.getRight())
+                    const int cx = (int) xForTime (grp->videoOffset + cm);
+                    if ((float) cx >= clip.getX() && (float) cx <= clip.getRight())
                     {
                         g.setColour (juce::Colour (0xcc33e0ff));
                         g.drawVerticalLine (cx, clip.getY() + 1.0f, clip.getBottom() - 1.0f);
@@ -739,8 +744,9 @@ double TimelineComponent::applySnap (double ts) const
     bool found = false;
     auto consider = [&] (double cand) { const double d = std::abs (cand - ts); if (d < best) { best = d; bestTs = cand; found = true; } };
 
+    const double voff = ag->videoOffset;            // cuts are anchored to the film, which may be slid
     consider (0.0);                                 // clip start -> timeline 0
-    for (double c : ag->cutMarkers) consider (c);    // clip start -> a scene cut
+    for (double c : ag->cutMarkers) consider (voff + c);    // clip start -> a scene cut
 
     if (dragTrack >= 0 && dragTrack < (int) ag->tracks.size())
     {
@@ -749,7 +755,7 @@ double TimelineComponent::applySnap (double ts) const
         {
             if (b < dragStartClip.sourceIn || b > dragStartClip.sourceIn + dragStartClip.duration) continue;
             const double off = b - dragStartClip.sourceIn;        // beat's offset within the clip
-            for (double c : ag->cutMarkers) consider (c - off);   // shift so this beat lands on cut c
+            for (double c : ag->cutMarkers) consider (voff + c - off);   // shift so this beat lands on cut c
         }
     }
     return found ? bestTs : ts;

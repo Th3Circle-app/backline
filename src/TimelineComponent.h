@@ -93,6 +93,7 @@ private:
     std::vector<Row> buildRows() const;
     double rawTimelineLength() const;
     double timelineLength() const;
+    double workspaceLength() const;   // extended scrollable arrangement length (content + headroom)
     double pixelsPerSecond() const;
     double xForTime (double t) const;
     double timeForX (double x) const;
