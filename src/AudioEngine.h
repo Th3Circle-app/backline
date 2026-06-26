@@ -82,6 +82,26 @@ public:
     juce::String auxPluginName (int index);
     void removeAuxPlugin (int index);
 
+    //== Output buses (sub-mixes): route a track's output to a bus with its own fader/mute/FX ==
+    int   addBus (const juce::String& name);     // returns the new bus index
+    int   busCount();
+    juce::String busName (int idx);
+    void  setTrackOutput (int trackId, int busOrMaster);   // -1 = master, else bus index
+    int   getTrackOutput (int trackId);
+    void  setBusGain (int idx, float g);
+    float getBusGain (int idx);
+    void  setBusMute (int idx, bool m);
+    bool  getBusMute (int idx);
+    float getBusPeak (int idx);
+    void  addBusEffect (int idx, int which);
+    int   busPluginCount (int idx);
+    juce::AudioProcessor* busPlugin (int idx, int index);
+    juce::String busPluginName (int idx, int index);
+    void  removeBusPlugin (int idx, int index);
+    void  removeBus (int idx);                  // tracks routed here fall back to master
+    juce::var saveBusFx (int idx);
+    void  restoreBusFx (int idx, const juce::var& fxArray);
+
     /** Ensures the transport runs at least this long (so the playhead keeps
         advancing over video-only regions with no audio). */
     void setMinLengthSeconds (double seconds);
@@ -117,6 +137,7 @@ private:
         std::atomic<float>       gain { 1.0f };
         std::atomic<float>       pan  { 0.0f };
         std::atomic<float>       send { 0.0f };   // post-fader send level to the FX/aux bus (0..1)
+        std::atomic<int>         output { -1 };   // routing: -1 = master, else a bus index
         std::atomic<float>       peak { 0.0f };   // post-fader peak of the last block (for the meter)
         std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
         std::vector<std::pair<double, float>> autoEnv;   // volume envelope (time, gain), sorted; read under lock
@@ -147,6 +168,18 @@ private:
         juce::AudioBuffer<float> scratch;         // reused per-track render buffer (no realtime alloc)
         juce::AudioBuffer<float> aux;             // FX/aux bus accumulator (tracks send into it; chain -> master)
         std::vector<std::unique_ptr<juce::AudioProcessor>> auxChain;   // FX on the aux bus (e.g. a shared reverb)
+
+        // Output buses (sub-mixes): a track's output routes here, the bus FX+fader run, then it sums to master.
+        struct Bus
+        {
+            juce::String name;
+            std::atomic<float> gain { 1.0f };
+            std::atomic<float> peak { 0.0f };
+            std::atomic<bool>  mute { false };
+            std::vector<std::unique_ptr<juce::AudioProcessor>> chain;
+            juce::AudioBuffer<float> buf;
+        };
+        std::vector<std::unique_ptr<Bus>> buses;
         std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
         std::atomic<float> masterGain { 1.0f };
         std::atomic<float> masterPeak { 0.0f };

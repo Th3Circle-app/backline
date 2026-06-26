@@ -338,6 +338,9 @@ public:
         mixerView.onRecordArm    = [this] (int g, int t, bool b) { if (validTrack (g, t)) { groups[(size_t) g]->tracks[(size_t) t]->recordArm = b; timeline.repaint(); } };
         mixerView.onBounce       = [this] { exportAudio(); };
         mixerView.onSend         = [this] (int g, int t, float v) { if (validTrack (g, t)) { auto& tr = *groups[(size_t) g]->tracks[(size_t) t]; tr.send = v; audioEngine.setTrackSend (tr.engineId, v); } };
+        mixerView.onBusFader     = [this] (int b, float v) { audioEngine.setBusGain (b, v); };
+        mixerView.onBusMute      = [this] (int b, bool m)  { audioEngine.setBusMute (b, m); };
+        mixerView.onBusFx        = [this] (int b) { showBusFxMenu (b); };
         addChildComponent (mixerView);   // shown when toggled
 
         keysButton.onClick = [this] { showKeysMenu(); };
@@ -2660,6 +2663,14 @@ private:
             m.addSubMenu ("Effects (" + juce::String (pc) + ")", fx);
         }
 
+        juce::PopupMenu out;   // output routing: master or a bus
+        const int curOut = groups[(size_t) g]->tracks[(size_t) t]->output;
+        out.addItem (7000, "Master", true, curOut < 0);
+        for (int b = 0; b < audioEngine.busCount(); ++b) out.addItem (7001 + b, audioEngine.busName (b), true, curOut == b);
+        out.addSeparator();
+        out.addItem (7100, "New Bus");
+        m.addSubMenu ("Output", out);
+
         m.addSeparator();
         m.addItem (6, "Plugins window...");
         m.addItem (5, scanning ? "Scanning plugins..." : "Rescan plugins", ! scanning);
@@ -2689,13 +2700,65 @@ private:
                     });
                 }
             }
-            else if (r >= 4000)
+            else if (r >= 4000 && r < 5000)
             {
                 const int idx  = (r - 4000) / 2;
                 const bool open = ((r - 4000) % 2) == 0;
                 if (open) openPluginEditor (engineId, idx);
                 else { closePluginWindowForProc (audioEngine.trackPlugin (engineId, idx)); audioEngine.removeTrackPlugin (engineId, idx); }
             }
+            else if (r == 7000)               setTrackOutputRoute (g, t, -1);
+            else if (r >= 7001 && r < 7100)   setTrackOutputRoute (g, t, r - 7001);
+            else if (r == 7100)             { const int nb = audioEngine.addBus ("Bus " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            refreshMixer();
+            restoreKeyFocus();
+        });
+    }
+
+    void setTrackOutputRoute (int g, int t, int out)
+    {
+        if (! validTrack (g, t)) return;
+        groups[(size_t) g]->tracks[(size_t) t]->output = out;
+        audioEngine.setTrackOutput (groups[(size_t) g]->tracks[(size_t) t]->engineId, out);
+        refreshMixer();
+        titleLabel.setText (out < 0 ? "Output -> Master" : ("Output -> " + audioEngine.busName (out)), juce::dontSendNotification);
+    }
+
+    void openBusEditor (int b, int idx)
+    {
+        auto* proc = audioEngine.busPlugin (b, idx);
+        if (proc == nullptr) return;
+        for (auto& w : pluginWindows) if (w->proc == proc) { w->toFront (true); return; }
+        auto win = std::make_unique<PluginWindow> (proc, laf.skin.panel);
+        auto* raw = win.get(); auto a = alive;
+        win->onClose = [this, raw, a] { juce::MessageManager::callAsync ([this, raw, a] { if (a->load()) closePluginWindow (raw); }); };
+        pluginWindows.push_back (std::move (win));
+    }
+
+    void showBusFxMenu (int b)
+    {
+        juce::PopupMenu insert;
+        const char* fx[] = { "EQ", "Compressor", "Reverb", "Delay", "Limiter", "Gate" };
+        for (int i = 0; i < 6; ++i) insert.addItem (5000 + i, juce::String (fx[i]) + " (Layback)");
+        juce::PopupMenu m;
+        m.addSectionHeader (audioEngine.busName (b));
+        m.addSubMenu ("Insert effect", insert);
+        const int pc = audioEngine.busPluginCount (b);
+        if (pc > 0)
+        {
+            juce::PopupMenu fxm;
+            for (int i = 0; i < pc; ++i) { juce::PopupMenu one; one.addItem (5100 + i * 2, "Open editor"); one.addItem (5100 + i * 2 + 1, "Remove"); fxm.addSubMenu (audioEngine.busPluginName (b, i), one); }
+            m.addSubMenu ("Effects (" + juce::String (pc) + ")", fxm);
+        }
+        m.addSeparator();
+        m.addItem (5900, "Remove Bus");
+        m.showMenuAsync (juce::PopupMenu::Options(), [this, b] (int r)
+        {
+            if      (r >= 5000 && r < 5006) { audioEngine.addBusEffect (b, r - 5000); openBusEditor (b, audioEngine.busPluginCount (b) - 1); }
+            else if (r >= 5100 && r < 5900) { const int idx = (r - 5100) / 2; const bool open = ((r - 5100) % 2) == 0;
+                                              if (open) openBusEditor (b, idx);
+                                              else { closePluginWindowForProc (audioEngine.busPlugin (b, idx)); audioEngine.removeBusPlugin (b, idx); } }
+            else if (r == 5900) { audioEngine.removeBus (b); for (auto& gp : groups) for (auto& tk : gp->tracks) { if (tk->output == b) tk->output = -1; else if (tk->output > b) tk->output -= 1; } }
             refreshMixer();
             restoreKeyFocus();
         });
@@ -2851,6 +2914,19 @@ private:
         root->setProperty ("loopEnd", loopEnd);
         root->setProperty ("masterGain", audioEngine.getMasterGain());
         root->setProperty ("masterMute", audioEngine.getMasterMute());
+        {   // output buses (sub-mixes)
+            juce::var barr;
+            for (int b = 0; b < audioEngine.busCount(); ++b)
+            {
+                auto* bo = new juce::DynamicObject();
+                bo->setProperty ("name", audioEngine.busName (b));
+                bo->setProperty ("gain", audioEngine.getBusGain (b));
+                bo->setProperty ("mute", audioEngine.getBusMute (b));
+                bo->setProperty ("fx", audioEngine.saveBusFx (b));
+                barr.append (juce::var (bo));
+            }
+            root->setProperty ("buses", barr);
+        }
 
         juce::var garr;
         for (auto& g : groups)
@@ -2883,6 +2959,8 @@ private:
                 to->setProperty ("send", t->send);
                 to->setProperty ("mixGroup", t->mixGroup);
                 to->setProperty ("recordArm", t->recordArm);
+                to->setProperty ("send", t->send);
+                to->setProperty ("output", t->output);
                 if (t->engineId >= 0) to->setProperty ("fx", audioEngine.saveTrackFx (t->engineId));
                 juce::var aarr;
                 for (auto& p : t->volumeAuto) { auto* po = new juce::DynamicObject(); po->setProperty ("t", p.time); po->setProperty ("v", p.value); aarr.append (juce::var (po)); }
@@ -3076,6 +3154,7 @@ private:
             for (auto& t : g->tracks)
             { if (t->thumb) { t->thumb->removeChangeListener (this); t->thumb->setSource (nullptr); } audioEngine.removeTrack (t->engineId); }
         groups.clear();
+        while (audioEngine.busCount() > 0) audioEngine.removeBus (0);   // clear output buses for a fresh/opened project
         timeline.setGroups (&groups);
         activeGroup = -1; selGroup = selTrack = selClip = -1;
         playhead = 0.0; reachedEnd = false; loopEnabled = false; loopStart = loopEnd = 0.0; lastMinLen = -1.0;
@@ -3102,6 +3181,15 @@ private:
             if (juce::File::isAbsolutePath (rel)) { juce::File f (rel); if (f.existsAsFile()) return f; }
             return baseDir.getChildFile (rel);
         };
+
+        if (auto* barr = root["buses"].getArray())   // recreate output buses BEFORE tracks (so routing targets exist)
+            for (auto& bv : *barr)
+            {
+                const int b = audioEngine.addBus (bv.getProperty ("name", "Bus").toString());
+                audioEngine.setBusGain (b, (float) bv.getProperty ("gain", 1.0));
+                audioEngine.setBusMute (b, (bool) bv.getProperty ("mute", false));
+                audioEngine.restoreBusFx (b, bv["fx"]);
+            }
 
         if (auto* garr = root["groups"].getArray())
             for (auto& gv : *garr)
@@ -3139,6 +3227,8 @@ private:
                         tr->send         = (float) tv.getProperty ("send", 0.0);
                         tr->mixGroup     = (int)   tv.getProperty ("mixGroup", 0);
                         tr->recordArm    = (bool)  tv.getProperty ("recordArm", false);
+                        tr->send         = (float) tv.getProperty ("send", 0.0);
+                        tr->output       = (int)   tv.getProperty ("output", -1);
                         tr->automationOn = (bool)  tv.getProperty ("autoOn", false);
                         if (auto* aa = tv["auto"].getArray())
                             for (auto& av : *aa) tr->volumeAuto.push_back ({ (double) av.getProperty ("t", 0.0), (float) av.getProperty ("v", 1.0) });
@@ -3163,6 +3253,8 @@ private:
                         else
                         {
                             audioEngine.setTrackPan (id, tr->pan);   // restore pan (volume is applied via applyMixGains)
+                            audioEngine.setTrackSend (id, tr->send);
+                            audioEngine.setTrackOutput (id, tr->output);
                             audioEngine.setTrackSend (id, tr->send);
                             audioEngine.restoreTrackFx (id, tv["fx"]);   // recreate EQ/Comp + hosted plugins with their state
                             { std::vector<std::pair<double, float>> env; for (auto& p : tr->volumeAuto) env.push_back ({ p.time, p.value });

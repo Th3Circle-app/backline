@@ -14,6 +14,8 @@
     fader and a live peak meter. The Master strip omits pan/mute/solo/inserts. */
 struct ChannelStrip : public juce::Component
 {
+    bool isBus = false;   // an output-bus strip (master-style layout, bus callbacks)
+    int  busIdx = -1;
     int  group = -1, track = -1, engineId = -1;
     bool isMaster = false;
     AudioEngine* engine = nullptr;
@@ -89,8 +91,8 @@ struct ChannelStrip : public juce::Component
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (! isMaster && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }
-        if (isMaster && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
+        if ((! isMaster || isBus) && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }   // insert FX (tracks + buses)
+        if (isMaster && ! isBus && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
         if (! isMaster && sendsRow.contains (e.getPosition())) { setSendFromX (e.x); return; }              // FX-bus send
         if (! isMaster && groupRow.contains (e.getPosition())) { groupId = (groupId + 1) % 5; if (onGroupChange) onGroupChange (groupId); repaint(); return; }   // cycle link group
         if (! isMaster && ! riRow.isEmpty())
@@ -300,6 +302,9 @@ public:
     std::function<void (int, int, int)>   onGroupChange;   // (group, track, link-group id)
     std::function<void (float)>           onMasterVolume;
     std::function<void (bool)>            onMasterMute;
+    std::function<void (int, float)>      onBusFader;   // (busIdx, gain)
+    std::function<void (int, bool)>       onBusMute;    // (busIdx, muted)
+    std::function<void (int)>             onBusFx;      // (busIdx) -> open bus FX menu
 
     MixerView() = default;
 
@@ -326,9 +331,27 @@ public:
             for (int t = 0; t < (int) grp->tracks.size(); ++t)
                 addStrip (activeGroup, t, grp->tracks[(size_t) t].get(), false);
         }
+        if (engine != nullptr)              // output-bus strips, between tracks and master
+            for (int b = 0, bc = engine->busCount(); b < bc; ++b)
+                addBusStrip (b);
         addStrip (-1, -1, nullptr, true);   // master
         resized();
         repaint();
+    }
+
+    void addBusStrip (int b)
+    {
+        auto s = std::make_unique<ChannelStrip> (true);   // master-style layout
+        s->isBus = true; s->busIdx = b; s->engine = engine; s->skin = skin;
+        s->name.setText (engine != nullptr ? engine->busName (b) : ("Bus " + juce::String (b + 1)), juce::dontSendNotification);
+        s->fader.setValue (engine != nullptr ? engine->getBusGain (b) : 1.0, juce::dontSendNotification);
+        s->mute.setToggleState (engine != nullptr && engine->getBusMute (b), juce::dontSendNotification);
+        for (int i = 0, cnt = engine != nullptr ? engine->busPluginCount (b) : 0; i < cnt; ++i) s->fxNames.add (engine->busPluginName (b, i));
+        s->onFader      = [this, b] (float v) { if (onBusFader) onBusFader (b, v); };
+        s->onMuteToggle = [this, b] (bool m)  { if (onBusMute)  onBusMute  (b, m); };
+        s->onFxClick    = [this, b] { if (onBusFx) onBusFx (b); };
+        addAndMakeVisible (*s);
+        strips.push_back (std::move (s));
     }
 
     // Refresh control values from the model without recreating strips (e.g. after a
@@ -357,7 +380,8 @@ public:
         if (engine == nullptr) return;
         for (auto& s : strips)
         {
-            const float pk = s->isMaster ? engine->getMasterPeak()
+            const float pk = s->isBus    ? engine->getBusPeak (s->busIdx)
+                           : s->isMaster ? engine->getMasterPeak()
                                          : (s->engineId >= 0 ? engine->getTrackPeak (s->engineId) : 0.0f);
             if (pk >= 0.0f) s->setMeter (pk);   // -1 => the audio lock was busy this tick; hold last
         }

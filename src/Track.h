@@ -30,6 +30,7 @@ struct AudioTrack
     float volume = 1.0f;               // channel fader, linear (0 .. ~1.4)
     float pan    = 0.0f;               // -1 = hard left .. +1 = hard right
     float send   = 0.0f;               // post-fader send to the FX/aux bus (0..1)
+    int   output = -1;                 // output routing: -1 = master, else a bus index
     int   mixGroup = 0;                // mixer link group (0 = none, 1..4 = linked faders/mute/solo)
     std::vector<double> beatMarkers;   // onset times within the source (seconds)
     std::vector<AutoPoint> volumeAuto;   // volume automation breakpoints (sorted by time)
