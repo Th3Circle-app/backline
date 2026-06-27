@@ -249,7 +249,7 @@ public:
         timeLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2b303b));
         addAndMakeVisible (timeLabel);
 
-        titleLabel.setText ("Layback Station", juce::dontSendNotification);
+        titleLabel.setText ("Backline", juce::dontSendNotification);
         titleLabel.setFont (juce::Font (juce::FontOptions().withHeight (14.0f)));
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xff9aa0a6));
         addAndMakeVisible (titleLabel);
@@ -477,7 +477,7 @@ public:
         lastMinLen = -1.0;
 
         selGroup = g; selTrack = -1; selClip = -1;
-        titleLabel.setText ("Layback Station  -  " + ag->name, juce::dontSendNotification);
+        titleLabel.setText ("Backline  -  " + ag->name, juce::dontSendNotification);
 
         applyMixGains();
 
@@ -813,7 +813,7 @@ public:
                 auto w = laybackWordmark;
                 g.setColour (s.text);
                 g.setFont (juce::Font (juce::FontOptions().withHeight (14.0f)));
-                g.drawText ("LAYBACK", w, juce::Justification::centredLeft, false);
+                g.drawText ("BACKLINE", w, juce::Justification::centredLeft, false);
                 g.setColour (s.accent);
                 g.fillEllipse ((float) (w.getX() + 82), (float) w.getCentreY() - 2.5f, 5.0f, 5.0f);
             }
@@ -1838,7 +1838,7 @@ private:
     static juce::String profileName (KeyProfile p)
     {
         switch (p) { case KeyProfile::Logic: return "Logic"; case KeyProfile::ProTools: return "Pro Tools";
-                     case KeyProfile::Ableton: return "Ableton"; default: return "Layback"; }
+                     case KeyProfile::Ableton: return "Ableton"; default: return "Backline"; }
     }
 
     void applyKeyProfile (KeyProfile p)
@@ -1969,7 +1969,7 @@ private:
         auto addSkin = [&] (juce::PopupMenu& pm)
         {
             juce::PopupMenu sk;
-            sk.addItem (9020, "Layback",      true, keyProfile == KeyProfile::Layback);
+            sk.addItem (9020, "Backline",      true, keyProfile == KeyProfile::Layback);
             sk.addItem (9021, "Logic",        true, keyProfile == KeyProfile::Logic);
             sk.addItem (9022, "Pro Tools",    true, keyProfile == KeyProfile::ProTools);
             sk.addItem (9023, "Ableton Live", true, keyProfile == KeyProfile::Ableton);
@@ -2138,7 +2138,7 @@ private:
         }
         else if (name == "Help")
         {
-            m.addItem (9098, "Layback Station Help");
+            m.addItem (9098, "Backline Help");
         }
         return m;
     }
@@ -2224,7 +2224,7 @@ private:
     void showKeysMenu()
     {
         juce::PopupMenu m;
-        m.addItem (1, "Layback Station", true, keyProfile == KeyProfile::Layback);
+        m.addItem (1, "Backline", true, keyProfile == KeyProfile::Layback);
         m.addItem (2, "Logic",          true, keyProfile == KeyProfile::Logic);
         m.addItem (3, "Pro Tools",      true, keyProfile == KeyProfile::ProTools);
         m.addItem (4, "Ableton Live",   true, keyProfile == KeyProfile::Ableton);
@@ -2278,7 +2278,7 @@ private:
             playhead = 0.0; reachedEnd = false; lastMinLen = -1.0;
             audioEngine.setPositionSeconds (0.0);
             audioEngine.setMinLengthSeconds (0.0);
-            titleLabel.setText ("Layback Station", juce::dontSendNotification);
+            titleLabel.setText ("Backline", juce::dontSendNotification);
             timeline.setActiveGroup (-1);
             timeline.setSelection (-1, -1, -1);
             timeline.setPlayhead (0.0);
@@ -2369,14 +2369,14 @@ private:
     void openHelpWindow()
     {
         if (helpWindow != nullptr) { helpWindow->toFront (true); return; }
-        helpWindow = std::make_unique<InfoWindow> ("Layback Station - Help & Shortcuts", helpText(), laf.skin.panel, laf.skin.text);
+        helpWindow = std::make_unique<InfoWindow> ("Backline - Help & Shortcuts", helpText(), laf.skin.panel, laf.skin.text);
         auto a = alive;
         helpWindow->onClose = [this, a] { if (a->load()) { helpWindow.reset(); restoreKeyFocus(); } };
     }
     static juce::String helpText()
     {
         return juce::String::fromUTF8 (
-            "LAYBACK STATION - Help & Shortcuts\n"
+            "BACKLINE - Help & Shortcuts\n"
             "===================================\n\n"
             "GETTING STARTED\n"
             "  - Drag a video from Finder into the window (or File > Add Video).\n"
@@ -2669,7 +2669,7 @@ private:
         out.addItem (7000, "Master", true, curOut < 0);
         for (int b = 0; b < audioEngine.busCount(); ++b) out.addItem (7001 + b, audioEngine.busName (b), true, curOut == b);
         out.addSeparator();
-        out.addItem (7100, "New Backline");
+        out.addItem (7100, "New Submix");
         m.addSubMenu ("Output", out);
 
         m.addSeparator();
@@ -2710,7 +2710,7 @@ private:
             }
             else if (r == 7000)               setTrackOutputRoute (g, t, -1);
             else if (r >= 7001 && r < 7100)   setTrackOutputRoute (g, t, r - 7001);
-            else if (r == 7100)             { const int nb = audioEngine.addBus ("Backline " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            else if (r == 7100)             { const int nb = audioEngine.addBus ("Submix " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
             refreshMixer();
             restoreKeyFocus();
         });
@@ -2734,12 +2734,12 @@ private:
         m.addItem (7000, "Master", true, cur < 0);
         for (int b = 0; b < audioEngine.busCount(); ++b) m.addItem (7001 + b, audioEngine.busName (b), true, cur == b);
         m.addSeparator();
-        m.addItem (7100, "New Backline");
+        m.addItem (7100, "New Submix");
         m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r)
         {
             if      (r == 7000) setTrackOutputRoute (g, t, -1);
             else if (r >= 7001 && r < 7100) setTrackOutputRoute (g, t, r - 7001);
-            else if (r == 7100) { const int nb = audioEngine.addBus ("Backline " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            else if (r == 7100) { const int nb = audioEngine.addBus ("Submix " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
             restoreKeyFocus();
         });
     }
@@ -2771,7 +2771,7 @@ private:
             m.addSubMenu ("Effects (" + juce::String (pc) + ")", fxm);
         }
         m.addSeparator();
-        m.addItem (5900, "Remove Backline");
+        m.addItem (5900, "Remove Submix");
         m.showMenuAsync (juce::PopupMenu::Options(), [this, b] (int r)
         {
             if      (r >= 5000 && r < 5006) { audioEngine.addBusEffect (b, r - 5000); openBusEditor (b, audioEngine.busPluginCount (b) - 1); }
@@ -3081,7 +3081,7 @@ private:
         const auto f = recoveryFile();
         if (! f.existsAsFile()) return;
         auto* w = new juce::AlertWindow ("Recover unsaved session?",
-                       "Layback Station found an unsaved session from a previous run. Restore it?",
+                       "Backline found an unsaved session from a previous run. Restore it?",
                        juce::MessageBoxIconType::QuestionIcon);
         w->addButton ("Restore", 1, juce::KeyPress (juce::KeyPress::returnKey));
         w->addButton ("Discard", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -3182,7 +3182,7 @@ private:
         clearHistory();
         loopToggle.setToggleState (false, juce::dontSendNotification);
         timeline.setActiveGroup (-1); timeline.setSelection (-1, -1, -1); timeline.setLoop (false, 0.0, 0.0); timeline.setPlayhead (0.0);
-        titleLabel.setText ("Layback Station", juce::dontSendNotification);
+        titleLabel.setText ("Backline", juce::dontSendNotification);
         refreshMixer();
         resized(); timeline.repaint();
     }
@@ -3511,7 +3511,7 @@ private:
 class LaybackApplication : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override    { return "Layback Station"; }
+    const juce::String getApplicationName() override    { return "Backline"; }
     const juce::String getApplicationVersion() override { return "0.0.1"; }
     bool moreThanOneInstanceAllowed() override          { return true; }
 

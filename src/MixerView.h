@@ -356,7 +356,7 @@ public:
     {
         auto s = std::make_unique<ChannelStrip> (true);   // master-style layout
         s->isBus = true; s->busIdx = b; s->engine = engine; s->skin = skin;
-        s->name.setText (engine != nullptr ? engine->busName (b) : ("Backline " + juce::String (b + 1)), juce::dontSendNotification);
+        s->name.setText (engine != nullptr ? engine->busName (b) : ("Submix " + juce::String (b + 1)), juce::dontSendNotification);
         s->fader.setValue (engine != nullptr ? engine->getBusGain (b) : 1.0, juce::dontSendNotification);
         s->mute.setToggleState (engine != nullptr && engine->getBusMute (b), juce::dontSendNotification);
         for (int i = 0, cnt = engine != nullptr ? engine->busPluginCount (b) : 0; i < cnt; ++i) s->fxNames.add (engine->busPluginName (b, i));
@@ -385,7 +385,7 @@ public:
             s->solo.setToggleState (tr->solo, juce::dontSendNotification);
             s->sendLevel = tr->send;
             s->outputLabel = (tr->output < 0) ? juce::String ("Stereo Out")
-                           : (engine != nullptr ? engine->busName (tr->output) : ("Backline " + juce::String (tr->output + 1)));
+                           : (engine != nullptr ? engine->busName (tr->output) : ("Submix " + juce::String (tr->output + 1)));
             s->repaint();
         }
     }
@@ -445,7 +445,7 @@ private:
             s->sendLevel = tr->send;
             s->groupId = tr->mixGroup;
             s->outputLabel = (tr->output < 0) ? juce::String ("Stereo Out")
-                           : (engine != nullptr ? engine->busName (tr->output) : ("Backline " + juce::String (tr->output + 1)));
+                           : (engine != nullptr ? engine->busName (tr->output) : ("Submix " + juce::String (tr->output + 1)));
         }
         else
         {

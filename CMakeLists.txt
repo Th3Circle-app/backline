@@ -26,12 +26,12 @@ target_compile_definitions(soundtouch PUBLIC SOUNDTOUCH_FLOAT_SAMPLES
 target_compile_options(soundtouch PRIVATE "SHELL:-include algorithm" "SHELL:-include cstring" -w)   # SoundTouch sources miss <algorithm>; silence its warnings
 
 juce_add_gui_app(LaybackStation
-    PRODUCT_NAME "Layback Station"
-    COMPANY_NAME "Layback"
+    PRODUCT_NAME "Backline"
+    COMPANY_NAME "Backline"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Layback Station records audio takes from your input device."
-    BUNDLE_ID "app.layback.station")
+    MICROPHONE_PERMISSION_TEXT "Backline records audio takes from your input device."
+    BUNDLE_ID "app.backline.app")
 
 target_sources(LaybackStation PRIVATE
     src/Main.cpp

@@ -90,7 +90,7 @@ struct Skin
 
             case Layback:
             default:        // OUR flagship "Midnight Indigo Glass": violet/cyan, backlit-glass keys
-                s.name = "Layback";
+                s.name = "Backline";
                 s.windowBg = juce::Colour (0xff0b0a14); s.panel = juce::Colour (0xff15131f); s.control = juce::Colour (0xff211d30);
                 s.accent = juce::Colour (0xff7c5cff); s.text = juce::Colour (0xffeae8f5); s.muted = juce::Colour (0xff7d7895);
                 s.ruler = juce::Colour (0xff322c47); s.headerTop = juce::Colour (0xff241d3a); s.headerBottom = juce::Colour (0xff111020);
