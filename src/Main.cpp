@@ -18,6 +18,7 @@
 #include "LogicControlBar.h"
 #include "LogicInspector.h"
 #include "ProToolsControlBar.h"
+#include "BacklineControlBar.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -218,6 +219,15 @@ public:
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
         addChildComponent (ptBar);
+
+        backlineBar.onRewind = [this] { seekAll (0.0); };
+        backlineBar.onStop   = [this] { pauseAll(); seekAll (0.0); };
+        backlineBar.onPlay   = [this] { togglePlay(); };
+        backlineBar.onRecord = [this] { toggleRecord(); };
+        backlineBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
+        backlineBar.isPlaying = [this] { return playing; };
+        backlineBar.isLoop    = [this] { return loopEnabled; };
+        addChildComponent (backlineBar);
 
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
@@ -856,17 +866,18 @@ public:
     void setChrome()
     {
         const int lay = laf.skin.layout;
-        const bool logic = (lay == 1), pt = (lay == 3);
+        const bool logic = (lay == 1), pt = (lay == 3), backline = (lay == 0);
         logicBar.setVisible (logic);
         logicInspector.setVisible (logic);
         ptBar.setVisible (pt);
+        backlineBar.setVisible (backline);
         const bool generic = ! logic && ! pt;
         const bool showButtons = generic || logic;   // Logic skin also gets the full top button row
         for (auto* c : std::initializer_list<juce::Component*> { &openButton, &playButton, &exportButton, &keysButton, &projectButton, &videoButton })
             c->setVisible (showButtons);
         loopToggle.setVisible (showButtons);
         snapToggle.setVisible (showButtons);
-        timeLabel.setVisible (generic);   // big time label only in Layback (Logic/PT have their own LCD)
+        timeLabel.setVisible (generic && ! backline);   // Backline + Logic/PT have their own counter
     }
 
     // Logic: full-width LCD control bar on top, status line, tracks fill below.
@@ -902,27 +913,27 @@ public:
         if (laf.skin.layout == 1) logicInspector.setSelection (&groups, activeGroup, selTrack);
     }
 
-    // Default (Layback) orientation: big viewer on top, transport mid, timeline bottom.
+    // Backline (house) orientation: own transport+counter bar on top, utility row, timeline below.
     void layoutDefault()
     {
         setChrome();
-        auto r = getLocalBounds().reduced (12);
-        auto top = r.removeFromTop (24);
-        laybackWordmark = top.removeFromLeft (150);   // brand wordmark, drawn in paint()
-        top.removeFromLeft (10);
-        titleLabel.setBounds (top);
-        r.removeFromTop (6);
+        auto area = getLocalBounds();
+        backlineBar.setBounds (area.removeFromTop (58));      // Backline transport + counter bar
+        transportBand = {};                                  // the bar paints its own chrome
+        laybackWordmark = {};                                // wordmark lives in the bar now
 
-        auto controls = r.removeFromTop (40);                 // transport bar at the top (DAW-like)
-        transportBand = { 0, controls.getY() - 6, getWidth(), controls.getHeight() + 12 };
-        r.removeFromTop (10);
+        auto status = area.removeFromTop (18);
+        titleLabel.setBounds (status.reduced (12, 0));
 
+        auto r = area.reduced (12, 0);
+        r.removeFromTop (4);
+        auto controls = r.removeFromTop (34);                // utility button row
+        r.removeFromTop (8);
         if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
-        timelineViewport.setBounds (r);                       // tracks fill the rest of the window
+        timelineViewport.setBounds (r);                      // tracks fill the rest
         viewerFrame = {};
 
         layoutToolbarButtons (controls);
-
         updateTimelineSize();
     }
 
@@ -1928,6 +1939,7 @@ private:
         logicBar.setSkin (s);
         logicInspector.setSkin (s);
         ptBar.setSkin (s);
+        backlineBar.setSkin (s);
         resized();                 // a skin can change the whole layout (e.g. Logic's top control bar)
         sendLookAndFeelChange();   // children re-read the themed colour IDs
         repaint();
@@ -3421,7 +3433,9 @@ private:
         const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;   // frame-accurate to the loaded clip
         const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
         const int tcH = (int) (playhead / 3600.0), tcM = ((int) (playhead / 60.0)) % 60, tcS = ((int) playhead) % 60, tcF = ((int) (playhead * fps)) % fpsI;
-        ptBar.setPosition (juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF), juce::String (bbBar) + "|" + juce::String (bbBeat));
+        const juce::String tc = juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF);
+        ptBar.setPosition (tc, juce::String (bbBar) + "|" + juce::String (bbBeat));
+        backlineBar.setPosition (tc, juce::String (bbBar) + "|" + juce::String (bbBeat));
         audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
@@ -3486,6 +3500,7 @@ private:
     LogicControlBar logicBar;     // shown only for the Logic station
     LogicInspector  logicInspector;
     ProToolsControlBar ptBar;     // shown only for the Pro Tools station
+    BacklineControlBar backlineBar;   // shown only for the Backline (house) skin
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;
