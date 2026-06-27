@@ -2669,7 +2669,7 @@ private:
         out.addItem (7000, "Master", true, curOut < 0);
         for (int b = 0; b < audioEngine.busCount(); ++b) out.addItem (7001 + b, audioEngine.busName (b), true, curOut == b);
         out.addSeparator();
-        out.addItem (7100, "New Bus");
+        out.addItem (7100, "New Backline");
         m.addSubMenu ("Output", out);
 
         m.addSeparator();
@@ -2710,7 +2710,7 @@ private:
             }
             else if (r == 7000)               setTrackOutputRoute (g, t, -1);
             else if (r >= 7001 && r < 7100)   setTrackOutputRoute (g, t, r - 7001);
-            else if (r == 7100)             { const int nb = audioEngine.addBus ("Bus " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            else if (r == 7100)             { const int nb = audioEngine.addBus ("Backline " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
             refreshMixer();
             restoreKeyFocus();
         });
@@ -2734,12 +2734,12 @@ private:
         m.addItem (7000, "Master", true, cur < 0);
         for (int b = 0; b < audioEngine.busCount(); ++b) m.addItem (7001 + b, audioEngine.busName (b), true, cur == b);
         m.addSeparator();
-        m.addItem (7100, "New Bus");
+        m.addItem (7100, "New Backline");
         m.showMenuAsync (juce::PopupMenu::Options(), [this, g, t] (int r)
         {
             if      (r == 7000) setTrackOutputRoute (g, t, -1);
             else if (r >= 7001 && r < 7100) setTrackOutputRoute (g, t, r - 7001);
-            else if (r == 7100) { const int nb = audioEngine.addBus ("Bus " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
+            else if (r == 7100) { const int nb = audioEngine.addBus ("Backline " + juce::String (audioEngine.busCount() + 1)); setTrackOutputRoute (g, t, nb); }
             restoreKeyFocus();
         });
     }
@@ -2771,7 +2771,7 @@ private:
             m.addSubMenu ("Effects (" + juce::String (pc) + ")", fxm);
         }
         m.addSeparator();
-        m.addItem (5900, "Remove Bus");
+        m.addItem (5900, "Remove Backline");
         m.showMenuAsync (juce::PopupMenu::Options(), [this, b] (int r)
         {
             if      (r >= 5000 && r < 5006) { audioEngine.addBusEffect (b, r - 5000); openBusEditor (b, audioEngine.busPluginCount (b) - 1); }
