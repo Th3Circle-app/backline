@@ -868,7 +868,7 @@ public:
         const int lay = laf.skin.layout;
         const bool logic = (lay == 1), pt = (lay == 3), backline = (lay == 0);
         logicBar.setVisible (logic);
-        logicInspector.setVisible (logic);
+        logicInspector.setVisible (logic || backline);   // left channel-strip inspector in Logic + Backline
         ptBar.setVisible (pt);
         backlineBar.setVisible (backline);
         const bool generic = ! logic && ! pt;
@@ -910,7 +910,7 @@ public:
 
     void refreshInspector()
     {
-        if (laf.skin.layout == 1) logicInspector.setSelection (&groups, activeGroup, selTrack);
+        if (laf.skin.layout == 1 || laf.skin.layout == 0) logicInspector.setSelection (&groups, activeGroup, selTrack);   // Logic + Backline
     }
 
     // Backline (house) orientation: own transport+counter bar on top, utility row, timeline below.
@@ -929,11 +929,16 @@ public:
         r.removeFromTop (4);
         auto controls = r.removeFromTop (34);                // utility button row
         r.removeFromTop (8);
+        layoutToolbarButtons (controls);
+
         if (mixerVisible) { mixerView.setBounds (r.removeFromBottom (210)); r.removeFromBottom (8); }
+
+        logicInspector.setBounds (r.removeFromLeft (200));   // left channel-strip inspector (selected track + master)
+        logicInspector.setSelection (&groups, activeGroup, selTrack);
+        r.removeFromLeft (2);
+
         timelineViewport.setBounds (r);                      // tracks fill the rest
         viewerFrame = {};
-
-        layoutToolbarButtons (controls);
         updateTimelineSize();
     }
 
