@@ -808,6 +808,18 @@ void TimelineComponent::mouseMove (const juce::MouseEvent& e)
         return;
     }
 
+    if (editTool != EditTool::Smart)   // Pro Tools edit tool: the cursor reflects the active tool
+    {
+        switch (editTool)
+        {
+            case EditTool::Trim:  setMouseCursor (juce::MouseCursor::LeftRightResizeCursor); return;
+            case EditTool::Grab:  setMouseCursor (juce::MouseCursor::DraggingHandCursor);    return;
+            case EditTool::Scrub: setMouseCursor (juce::MouseCursor::IBeamCursor);           return;
+            case EditTool::Zoom:  setMouseCursor (juce::MouseCursor::CrosshairCursor);       return;
+            default: break;
+        }
+    }
+
     const auto rows = buildRows();
     for (const auto& row : rows)
     {
