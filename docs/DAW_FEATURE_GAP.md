@@ -10,6 +10,20 @@ Legend: ✓ have · ◐ partial · ✗ missing · **SKIP** = out of scope for la
 
 ---
 
+## ✅ Status update — 2026-06-27: the P1 list shipped
+
+Built and committed since this audit:
+- **Loudness metering (BS.1770 / EBU R128)** — momentary / short-term / integrated LUFS + 4× true-peak on the master, readout on the mixer master strip (click to reset integration).
+- **Loudness-normalized export** — audio + video, targets -14 / -16 / -23 / -24 LUFS, TP-safe (never past -1 dBTP).
+- **Stems export** — one isolated WAV per track (track FX + bus + master applied; re-sums to the mix).
+- **PDC (plugin delay compensation)** — per-track delay across the track→bus→master graph; latency plugins no longer pull tracks off alignment.
+- **Pitch-shift** — clip "Pitch Shift…" (±24 st, length-independent, SoundTouch, baked + persisted).
+- **Cue ranges + exportable cue list** — markers can be named ranges; "Export cue list (.csv)" outputs markers/ranges/scene-cuts with frame-accurate timecode.
+
+**One P1 item intentionally deferred: plugin crash isolation.** Doing it *correctly* means hosting third-party plugins in a **separate OS process** with audio IPC (so a plugin segfault can't take Backline down). A fake in-process "guard" (try/catch) does **not** catch native crashes and would give false confidence. This is its own subsystem (~weeks), so it's left as a known limitation rather than faked. Mitigation today: plugins are scanned out-of-process and instantiated on a background thread, so a *hang* on load won't freeze the UI; a *crash* during processing can still bring the app down.
+
+---
+
 ## What Backline already has (the core is solid)
 
 - **Transport**: play/stop/return-to-zero/cycle/record, loop playback, frame-accurate timecode (HH:MM:SS:FF) + bars|beats, project fps.
