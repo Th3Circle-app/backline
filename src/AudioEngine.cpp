@@ -505,7 +505,7 @@ float AudioEngine::clipPeak (int trackId, double sourceIn, double duration)
     return pk;
 }
 
-std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio)
+std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio, double semitones)
 {
     if (ratio <= 0.02 || ratio > 50.0) return nullptr;
     juce::AudioBuffer<float> region;
@@ -528,6 +528,7 @@ std::shared_ptr<juce::AudioBuffer<float>> AudioEngine::makeStretchedClip (int tr
     st.setSampleRate ((unsigned int) rt);
     st.setChannels (2);
     st.setTempo (1.0 / ratio);                 // tempo < 1 => longer output, pitch preserved
+    if (std::abs (semitones) > 0.01) st.setPitchSemiTones ((float) semitones);   // independent pitch shift
     st.setSetting (SETTING_USE_AA_FILTER, 1);
 
     std::vector<float> in ((size_t) inLen * 2);

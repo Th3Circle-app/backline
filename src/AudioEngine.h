@@ -140,7 +140,7 @@ public:
     double sampleRate() const;   // current device sample rate (for length<->samples math)
     /** Bake a pitch-preserved time-stretch of a clip's source region (ratio = output/source length).
         Returns a stereo buffer at the device rate to play in place of the source; nullptr on failure. */
-    std::shared_ptr<juce::AudioBuffer<float>> makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio);
+    std::shared_ptr<juce::AudioBuffer<float>> makeStretchedClip (int trackId, double sourceIn, double srcSeconds, double ratio, double semitones = 0.0);
     /** Bake a tape-style speed fade (varispeed ramp at head/tail) of a clip's source region. */
     std::shared_ptr<juce::AudioBuffer<float>> makeSpeedFaded (int trackId, double sourceIn, double srcSeconds, double speedInSec, double speedOutSec);
 

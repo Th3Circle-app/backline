@@ -19,6 +19,7 @@ struct AudioClip
     int    fadeOutShape  = 0;
     float  gainDb        = 0.0f;  // per-clip gain in dB (0 = unity), pre-fader
     double stretchRatio  = 1.0;   // output/source length ratio (1 = none); source secs = duration/stretchRatio
+    double pitchSemitones = 0.0;  // pitch shift in semitones (0 = none), baked together with the stretch
     double speedFadeIn   = 0.0;   // tape-style spin-up at the clip head (seconds), pitch+tempo ramp
     double speedFadeOut  = 0.0;   // tape-style slow-down at the clip tail (seconds)
     double bakedSrcSeconds = 0.0; // source seconds the bake consumed (0 = none; needed to re-bake on load)

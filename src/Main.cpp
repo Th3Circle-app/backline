@@ -1323,6 +1323,7 @@ private:
         m.addSeparator();
         m.addItem (8, "Normalize");
         m.addItem (9, "Time-Stretch...");
+        m.addItem (32, "Pitch Shift...");
         m.addItem (30, "Speed Fade In (spin up)");
         m.addItem (31, "Speed Fade Out (slow down)");
         m.addItem (6, "Reset Clip Gain (0 dB)");
@@ -1337,6 +1338,7 @@ private:
                 else if (r == 7) crossfadeWithPrevious();
                 else if (r == 8) normalizeSelectedClip();
                 else if (r == 9) timeStretchSelectedClip();
+                else if (r == 32) pitchShiftSelectedClip();
                 else if (r == 30) applySpeedFade (true, false);
                 else if (r == 31) applySpeedFade (false, true);
                 else if (r == 6 && validClip (g, t, c))
@@ -1436,7 +1438,7 @@ private:
         const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
         const double ratio = juce::jlimit (0.25, 4.0, targetLen / juce::jmax (0.05, srcSeconds));
         titleLabel.setText ("Time-stretching...", juce::dontSendNotification);
-        auto baked = audioEngine.makeStretchedClip (tr->engineId, c.sourceIn, srcSeconds, ratio);
+        auto baked = audioEngine.makeStretchedClip (tr->engineId, c.sourceIn, srcSeconds, ratio, c.pitchSemitones);
         if (baked == nullptr) { titleLabel.setText ("Time-stretch failed", juce::dontSendNotification); return; }
         pushUndo();
         c.stretched = baked; c.stretchRatio = ratio; c.speedFadeIn = 0.0; c.speedFadeOut = 0.0;
@@ -1452,10 +1454,49 @@ private:
         if (c.stretchRatio == 1.0 && c.stretched == nullptr) return;
         const double srcSeconds = c.duration / juce::jmax (0.01, c.stretchRatio);
         pushUndo();
-        c.stretched.reset(); c.stretchRatio = 1.0; c.speedFadeIn = 0.0; c.speedFadeOut = 0.0; c.bakedSrcSeconds = 0.0; c.duration = srcSeconds;
+        c.stretched.reset(); c.stretchRatio = 1.0; c.pitchSemitones = 0.0; c.speedFadeIn = 0.0; c.speedFadeOut = 0.0; c.bakedSrcSeconds = 0.0; c.duration = srcSeconds;
         clipChanged (selGroup, selTrack, selClip, c);
         updateTimelineSize();
-        titleLabel.setText ("Stretch / speed reset", juce::dontSendNotification);
+        titleLabel.setText ("Stretch / pitch / speed reset", juce::dontSendNotification);
+    }
+
+    // Pitch-shift the selected clip in semitones (independent of length), baked via SoundTouch.
+    void pitchShiftSelectedClip()
+    {
+        if (! validClip (selGroup, selTrack, selClip)) { titleLabel.setText ("Select a clip to pitch-shift", juce::dontSendNotification); return; }
+        const auto& c = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
+        auto* w = new juce::AlertWindow ("Pitch Shift",
+                       "Shift this clip's pitch in semitones (+/-, length unchanged). Current: "
+                       + juce::String (c.pitchSemitones, 1) + " st:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("st", juce::String (c.pitchSemitones, 1));
+        w->addButton ("Shift", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Reset", 2);
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if      (r == 1) applyClipPitch (w->getTextEditorContents ("st").getDoubleValue());
+            else if (r == 2) applyClipPitch (0.0);
+            restoreKeyFocus();
+        }), false);
+    }
+    void applyClipPitch (double semis)
+    {
+        if (! validClip (selGroup, selTrack, selClip)) return;
+        semis = juce::jlimit (-24.0, 24.0, semis);
+        auto* tr = groups[(size_t) selGroup]->tracks[(size_t) selTrack].get();
+        AudioClip c = tr->clips[(size_t) selClip];
+        const double srcSeconds = c.bakedSrcSeconds > 0.0 ? c.bakedSrcSeconds : c.duration / juce::jmax (0.01, c.stretchRatio);
+        const double ratio = c.stretchRatio;   // keep the current length
+        if (std::abs (semis) < 0.05 && c.stretchRatio == 1.0) { resetClipStretch(); return; }   // no pitch + no stretch => plain source
+        titleLabel.setText ("Pitch-shifting...", juce::dontSendNotification);
+        auto baked = audioEngine.makeStretchedClip (tr->engineId, c.sourceIn, srcSeconds, ratio, semis);
+        if (baked == nullptr) { titleLabel.setText ("Pitch-shift failed", juce::dontSendNotification); return; }
+        pushUndo();
+        c.stretched = baked; c.pitchSemitones = semis; c.bakedSrcSeconds = srcSeconds;
+        c.speedFadeIn = 0.0; c.speedFadeOut = 0.0; c.duration = srcSeconds * ratio;
+        clipChanged (selGroup, selTrack, selClip, c);
+        titleLabel.setText (semis >= 0 ? ("Pitched +" + juce::String (semis, 1) + " st") : ("Pitched " + juce::String (semis, 1) + " st"), juce::dontSendNotification);
     }
 
     // Tape-style speed fade: spin-up at the head and/or slow-down at the tail (pitch + tempo ramp).
@@ -3081,6 +3122,7 @@ private:
                     co->setProperty ("fadeOutShape", c.fadeOutShape);
                     co->setProperty ("gainDb", c.gainDb);
                     co->setProperty ("stretch", c.stretchRatio);
+                    co->setProperty ("pitch", c.pitchSemitones);
                     co->setProperty ("spdIn", c.speedFadeIn);
                     co->setProperty ("spdOut", c.speedFadeOut);
                     co->setProperty ("bakeSrc", c.bakedSrcSeconds);
@@ -3193,8 +3235,8 @@ private:
         for (auto& cc : t.clips)
         {
             const double srcSec = cc.bakedSrcSeconds > 0.0 ? cc.bakedSrcSeconds : cc.duration / juce::jmax (0.01, cc.stretchRatio);
-            if      (cc.speedFadeIn > 0.0 || cc.speedFadeOut > 0.0) cc.stretched = audioEngine.makeSpeedFaded   (id, cc.sourceIn, srcSec, cc.speedFadeIn, cc.speedFadeOut);
-            else if (cc.stretchRatio != 1.0)                        cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio);
+            if      (cc.speedFadeIn > 0.0 || cc.speedFadeOut > 0.0)        cc.stretched = audioEngine.makeSpeedFaded   (id, cc.sourceIn, srcSec, cc.speedFadeIn, cc.speedFadeOut);
+            else if (cc.stretchRatio != 1.0 || cc.pitchSemitones != 0.0)  cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio, cc.pitchSemitones);
         }
         return true;
     }
@@ -3340,6 +3382,7 @@ private:
                                                        (int) cv.getProperty ("fadeInShape", 0), (int) cv.getProperty ("fadeOutShape", 0),
                                                        (float) cv.getProperty ("gainDb", 0.0),
                                                        (double) cv.getProperty ("stretch", 1.0),
+                                                       (double) cv.getProperty ("pitch", 0.0),
                                                        (double) cv.getProperty ("spdIn", 0.0),
                                                        (double) cv.getProperty ("spdOut", 0.0),
                                                        (double) cv.getProperty ("bakeSrc", 0.0) });
@@ -3365,8 +3408,8 @@ private:
                                                                                : cc.duration / juce::jmax (0.01, cc.stretchRatio);
                                 if (cc.speedFadeIn > 0.0 || cc.speedFadeOut > 0.0)
                                     cc.stretched = audioEngine.makeSpeedFaded (id, cc.sourceIn, srcSec, cc.speedFadeIn, cc.speedFadeOut);
-                                else if (cc.stretchRatio != 1.0)
-                                    cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio);
+                                else if (cc.stretchRatio != 1.0 || cc.pitchSemitones != 0.0)
+                                    cc.stretched = audioEngine.makeStretchedClip (id, cc.sourceIn, srcSec, cc.stretchRatio, cc.pitchSemitones);
                             }
                             tr->thumb = std::make_unique<juce::AudioThumbnail> (512, audioEngine.getFormatManager(), thumbnailCache);
                             tr->thumb->addChangeListener (this);
