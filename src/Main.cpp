@@ -192,6 +192,7 @@ public:
         logicBar.onMixer   = [this] { toggleMixer(); };
         logicBar.isPlaying = [this] { return playing; };
         logicBar.isCycle   = [this] { return loopEnabled; };
+        logicBar.onCounterClick = [this] { showCounterMenu(); };
         addChildComponent (logicBar);
 
         logicInspector.setEngine (&audioEngine);
@@ -218,6 +219,7 @@ public:
         };
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
+        ptBar.onCounterClick = [this] { showCounterMenu(); };
         addChildComponent (ptBar);
 
         backlineBar.onRewind = [this] { seekAll (0.0); };
@@ -227,6 +229,7 @@ public:
         backlineBar.onLoop   = [this] { loopToggle.setToggleState (! loopEnabled, juce::dontSendNotification); toggleLoop(); };
         backlineBar.isPlaying = [this] { return playing; };
         backlineBar.isLoop    = [this] { return loopEnabled; };
+        backlineBar.onCounterClick = [this] { showCounterMenu(); };
         addChildComponent (backlineBar);
 
         openButton.setButtonText ("Add Video...");
@@ -257,6 +260,9 @@ public:
         timeLabel.setColour (juce::Label::textColourId,       juce::Colour (0xff8fd6ff));
         timeLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff0b0d11));
         timeLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2b303b));
+        timeLabel.setTooltip ("Click to choose the readout: Timecode / Min:Sec / Bars & Beats");
+        counterClickProxy.cb = [this] { showCounterMenu(); };
+        timeLabel.addMouseListener (&counterClickProxy, false);
         addAndMakeVisible (timeLabel);
 
         titleLabel.setText ("Backline", juce::dontSendNotification);
@@ -376,6 +382,7 @@ public:
         commandManager.registerAllCommandsForTarget (this);
         addKeyListener (commandManager.getKeyMappings());
         setWantsKeyboardFocus (true);
+        loadCounterPrefs();                    // restore the counter format + tempo
         applyKeyProfile (loadSavedSkin());     // restore the user's last-used skin (Logic if unset)
 
         setApplicationCommandManagerToWatch (&commandManager);   // refreshes command-item states
@@ -1688,6 +1695,62 @@ private:
             });
     }
 
+    // Logic-style clickable counter: build the primary + secondary readout strings for the chosen mode.
+    void counterStrings (double t, juce::String& primary, juce::String& secondary) const
+    {
+        const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;
+        const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
+        const int tcH = (int) (t / 3600.0), tcM = ((int) (t / 60.0)) % 60, tcS = ((int) t) % 60, tcF = ((int) (t * fps)) % fpsI;
+        const juce::String tc = juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF);
+        const juce::String ms = formatTime (t);
+        const double spb   = 60.0 / juce::jmax (1.0, tempoBpm);
+        const double spbar = spb * juce::jmax (1, timeSigNum);
+        const int bar  = (int) (t / spbar) + 1;
+        const int beat = juce::jlimit (1, timeSigNum, (int) ((t - (double) (bar - 1) * spbar) / spb) + 1);
+        const juce::String bb = juce::String (bar) + "|" + juce::String (beat);
+        switch (counterMode)
+        {
+            case 1:  primary = ms; secondary = bb; break;   // Min:Sec
+            case 2:  primary = bb; secondary = tc; break;   // Bars & Beats
+            default: primary = tc; secondary = bb; break;   // Timecode
+        }
+    }
+    void refreshCounters()
+    {
+        juce::String pri, sec; counterStrings (playhead, pri, sec);
+        logicBar.setPosition (pri, sec); ptBar.setPosition (pri, sec); backlineBar.setPosition (pri, sec);
+        timeLabel.setText (pri + "   " + sec, juce::dontSendNotification);
+    }
+    void showCounterMenu()
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Timecode (HH:MM:SS:FF)", true, counterMode == 0);
+        m.addItem (2, "Minutes : Seconds",      true, counterMode == 1);
+        m.addItem (3, "Bars & Beats",           true, counterMode == 2);
+        m.addSeparator();
+        m.addItem (4, "Set Tempo... (" + juce::String (tempoBpm, 0) + " BPM)");
+        m.showMenuAsync (juce::PopupMenu::Options(),
+            [this] (int r)
+            {
+                if      (r >= 1 && r <= 3) { counterMode = r - 1; saveSettings(); refreshCounters(); }
+                else if (r == 4) setTempoDialog();
+                restoreKeyFocus();
+            });
+    }
+    void setTempoDialog()
+    {
+        auto* w = new juce::AlertWindow ("Tempo", "Project tempo (BPM), used for the Bars & Beats readout:", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("bpm", juce::String (tempoBpm, 1));
+        w->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (r == 1) { tempoBpm = juce::jlimit (20.0, 300.0, w->getTextEditorContents ("bpm").getDoubleValue()); saveSettings(); refreshCounters(); }
+            restoreKeyFocus();
+        }), false);
+    }
+
     void showExportMenu()
     {
         juce::PopupMenu normA, normV;
@@ -2391,7 +2454,16 @@ private:
         f.getParentDirectory().createDirectory();
         auto* o = new juce::DynamicObject();
         o->setProperty ("skin", (int) keyProfile);
+        o->setProperty ("counterMode", counterMode);
+        o->setProperty ("tempo", tempoBpm);
         f.replaceWithText (juce::JSON::toString (juce::var (o)));
+    }
+    void loadCounterPrefs()
+    {
+        const auto v = juce::JSON::parse (settingsFile().loadFileAsString());
+        if (! v.isObject()) return;
+        counterMode = juce::jlimit (0, 2, (int) v.getProperty ("counterMode", 0));
+        tempoBpm    = juce::jlimit (20.0, 300.0, (double) v.getProperty ("tempo", 120.0));
     }
     KeyProfile loadSavedSkin()   // defaults to Logic if no setting yet
     {
@@ -3594,17 +3666,7 @@ private:
             if (! isScrubbing) timeline.setPlayhead (playhead);
         }
 
-        timeLabel.setText (formatTime (playhead) + "  /  " + formatTime (timelineLength()), juce::dontSendNotification);
-        const int bbBar   = (int) (playhead / 2.0) + 1;                  // 120 BPM 4/4 -> bars/beats LCD
-        const double inBar = playhead - 2.0 * (double) (bbBar - 1);
-        const int bbBeat  = juce::jlimit (1, 4, (int) (inBar / 0.5) + 1);
-        logicBar.setPosition (juce::String (bbBar) + "  " + juce::String (bbBeat), formatTime (playhead));
-        const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;   // frame-accurate to the loaded clip
-        const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
-        const int tcH = (int) (playhead / 3600.0), tcM = ((int) (playhead / 60.0)) % 60, tcS = ((int) playhead) % 60, tcF = ((int) (playhead * fps)) % fpsI;
-        const juce::String tc = juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF);
-        ptBar.setPosition (tc, juce::String (bbBar) + "|" + juce::String (bbBeat));
-        backlineBar.setPosition (tc, juce::String (bbBar) + "|" + juce::String (bbBeat));
+        refreshCounters();   // Logic-style clickable counter (Timecode / Min:Sec / Bars & Beats per counterMode)
         audioEngine.setExternalPeak (videoAudible ? video.getAudioPeak() : 0.0f);   // full-mix Master-strip meter incl. video
         logicInspector.updateMeters();
         playButton.setButtonText (playing ? "Pause" : "Play");
@@ -3670,6 +3732,10 @@ private:
     LogicInspector  logicInspector;
     ProToolsControlBar ptBar;     // shown only for the Pro Tools station
     BacklineControlBar backlineBar;   // shown only for the Backline (house) skin
+    int    counterMode = 0;           // 0 = Timecode, 1 = Min:Sec, 2 = Bars & Beats (Logic-style clickable LCD)
+    double tempoBpm    = 120.0;       // for the bars|beats readout
+    int    timeSigNum  = 4;           // beats per bar (4/4)
+    struct ClickProxy : public juce::MouseListener { std::function<void()> cb; void mouseDown (const juce::MouseEvent&) override { if (cb) cb(); } } counterClickProxy;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;

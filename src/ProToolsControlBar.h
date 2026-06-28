@@ -10,6 +10,7 @@ class ProToolsControlBar : public juce::Component
 {
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
+    std::function<void()> onCounterClick;       // click the LCD to choose the readout format
     std::function<void (int)> onTool, onMode;   // edit-tool selected; edit-mode selected (3 = Grid)
     std::function<bool()> isPlaying, isLoop;
     int selTool = 4, selMode = 1;               // Smart tool + Slip mode are the defaults
@@ -136,6 +137,7 @@ public:
             if (tool[i].contains (e.getPosition())) { selTool = i; if (onTool) onTool (i); repaint(); return; }
         for (int i = 0; i < 4; ++i)                              // edit-mode (Grid = snap on, others = off)
             if (mode[i].contains (e.getPosition())) { selMode = i; if (onMode) onMode (i); repaint(); return; }
+        if ((mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) && onCounterClick) onCounterClick();
     }
 
 private:

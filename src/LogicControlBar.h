@@ -11,6 +11,7 @@ class LogicControlBar : public juce::Component
 {
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onCycle;
+    std::function<void()> onCounterClick;   // click the LCD to choose the readout format
     std::function<void()> onLibrary, onMixer;   // left-cluster chips that map to real panels
     std::function<bool()> isPlaying, isCycle;
 
@@ -122,6 +123,7 @@ public:
             }
         if (leftBtns[0].contains (e.getPosition())) { if (onLibrary) onLibrary(); return; }   // Library -> Plugins window
         if (leftBtns[1].contains (e.getPosition())) { if (onMixer)   onMixer();   return; }   // Mixer chip -> toggle Mixer
+        if (lcd.contains (e.getPosition()) && onCounterClick) onCounterClick();               // LCD -> counter format menu
     }
 
 private:

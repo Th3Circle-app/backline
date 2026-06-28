@@ -11,6 +11,7 @@ class BacklineControlBar : public juce::Component
 {
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
+    std::function<void()> onCounterClick;   // click the LCD to choose the readout format
     std::function<bool()> isPlaying, isLoop;
 
     BacklineControlBar() { setInterceptsMouseClicks (true, false); }
@@ -88,6 +89,7 @@ public:
                 else if (i == 4) { if (onLoop)   onLoop(); }
                 repaint(); return;
             }
+        if ((mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) && onCounterClick) onCounterClick();
     }
 
 private:
