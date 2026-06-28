@@ -11,7 +11,9 @@ class LogicControlBar : public juce::Component
 {
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onCycle;
-    std::function<void()> onCounterClick;   // click the LCD to choose the readout format
+    std::function<void()> onCounterClick;    // click the LCD to choose the readout format
+    std::function<void (int)> onCounterDrag; // drag the LCD vertically to nudge tempo
+    std::function<void()> onCounterRelease;  // drag ended (persist)
     std::function<void()> onLibrary, onMixer;   // left-cluster chips that map to real panels
     std::function<bool()> isPlaying, isCycle;
 
@@ -127,12 +129,26 @@ public:
             }
         if (leftBtns[0].contains (e.getPosition())) { if (onLibrary) onLibrary(); return; }   // Library -> Plugins window
         if (leftBtns[1].contains (e.getPosition())) { if (onMixer)   onMixer();   return; }   // Mixer chip -> toggle Mixer
-        if (lcd.contains (e.getPosition()) && onCounterClick) onCounterClick();               // LCD -> counter format menu
+        if (lcd.contains (e.getPosition())) { lcdHit = true; lcdMoved = false; lcdLastY = e.y; }   // LCD: click=menu, drag=tempo
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! lcdHit) return;
+        const int d = lcdLastY - e.y; lcdLastY = e.y;
+        if (d != 0) { lcdMoved = true; if (onCounterDrag) onCounterDrag (d); }
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (! lcdHit) return;
+        if (! lcdMoved) { if (onCounterClick) onCounterClick(); }
+        else if (onCounterRelease) onCounterRelease();
+        lcdHit = false;
     }
 
 private:
     Skin skin = Skin::forDaw (Skin::Logic);
     juce::Rectangle<int> btn[5], lcd, leftBtns[2];
+    bool lcdHit = false, lcdMoved = false; int lcdLastY = 0;
     juce::String lcdMain { "1  1" }, lcdSub { "0:00.00" };
     juce::String pLabel { "BARS  BEATS" }, sLabel { "MIN : SEC" };
 };

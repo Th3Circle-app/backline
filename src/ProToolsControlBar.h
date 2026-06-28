@@ -11,6 +11,8 @@ class ProToolsControlBar : public juce::Component
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
     std::function<void()> onCounterClick;       // click the LCD to choose the readout format
+    std::function<void (int)> onCounterDrag;    // drag the LCD vertically to nudge tempo
+    std::function<void()> onCounterRelease;     // drag ended (persist)
     std::function<void (int)> onTool, onMode;   // edit-tool selected; edit-mode selected (3 = Grid)
     std::function<bool()> isPlaying, isLoop;
     int selTool = 4, selMode = 1;               // Smart tool + Slip mode are the defaults
@@ -141,12 +143,26 @@ public:
             if (tool[i].contains (e.getPosition())) { selTool = i; if (onTool) onTool (i); repaint(); return; }
         for (int i = 0; i < 4; ++i)                              // edit-mode (Grid = snap on, others = off)
             if (mode[i].contains (e.getPosition())) { selMode = i; if (onMode) onMode (i); repaint(); return; }
-        if ((mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) && onCounterClick) onCounterClick();
+        if (mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) { lcdHit = true; lcdMoved = false; lcdLastY = e.y; }
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! lcdHit) return;
+        const int d = lcdLastY - e.y; lcdLastY = e.y;
+        if (d != 0) { lcdMoved = true; if (onCounterDrag) onCounterDrag (d); }
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (! lcdHit) return;
+        if (! lcdMoved) { if (onCounterClick) onCounterClick(); }
+        else if (onCounterRelease) onCounterRelease();
+        lcdHit = false;
     }
 
 private:
     Skin skin = Skin::forDaw (Skin::ProTools);
     juce::Rectangle<int> tool[5], btn[5], mode[4], mainLcd, subLcd;
+    bool lcdHit = false, lcdMoved = false; int lcdLastY = 0;
     juce::String mainCtr { "00:00:00" }, subCtr { "1|1" };
     juce::String pLabel { "TIMECODE" }, sLabel { "BARS|BEATS" };
 };

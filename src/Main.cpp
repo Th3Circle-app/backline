@@ -193,6 +193,8 @@ public:
         logicBar.isPlaying = [this] { return playing; };
         logicBar.isCycle   = [this] { return loopEnabled; };
         logicBar.onCounterClick = [this] { showCounterMenu(); };
+        logicBar.onCounterDrag  = [this] (int d) { nudgeTempo (d); };
+        logicBar.onCounterRelease = [this] { saveSettings(); };
         addChildComponent (logicBar);
 
         logicInspector.setEngine (&audioEngine);
@@ -220,6 +222,8 @@ public:
         ptBar.isPlaying = [this] { return playing; };
         ptBar.isLoop    = [this] { return loopEnabled; };
         ptBar.onCounterClick = [this] { showCounterMenu(); };
+        ptBar.onCounterDrag  = [this] (int d) { nudgeTempo (d); };
+        ptBar.onCounterRelease = [this] { saveSettings(); };
         addChildComponent (ptBar);
 
         backlineBar.onRewind = [this] { seekAll (0.0); };
@@ -230,6 +234,8 @@ public:
         backlineBar.isPlaying = [this] { return playing; };
         backlineBar.isLoop    = [this] { return loopEnabled; };
         backlineBar.onCounterClick = [this] { showCounterMenu(); };
+        backlineBar.onCounterDrag  = [this] (int d) { nudgeTempo (d); };
+        backlineBar.onCounterRelease = [this] { saveSettings(); };
         addChildComponent (backlineBar);
 
         openButton.setButtonText ("Add Video...");
@@ -260,8 +266,10 @@ public:
         timeLabel.setColour (juce::Label::textColourId,       juce::Colour (0xff8fd6ff));
         timeLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff0b0d11));
         timeLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2b303b));
-        timeLabel.setTooltip ("Click to choose the readout: Timecode / Min:Sec / Bars & Beats");
-        counterClickProxy.cb = [this] { showCounterMenu(); };
+        timeLabel.setTooltip ("Click to choose the readout (Timecode / Bars / Feet+Frames...); drag up/down to nudge tempo");
+        counterClickProxy.cb      = [this] { showCounterMenu(); };
+        counterClickProxy.drag    = [this] (int d) { nudgeTempo (d); };
+        counterClickProxy.release = [this] { saveSettings(); };
         timeLabel.addMouseListener (&counterClickProxy, false);
         addAndMakeVisible (timeLabel);
 
@@ -1701,6 +1709,7 @@ private:
     {
         const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;
         const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
+        if (mode == 0 || mode == 3 || mode == 4) t += startOffsetSeconds;   // SMPTE/film readouts ride the reel start
         switch (mode)
         {
             case 1:  val = formatTime (t); label = "MIN : SEC"; break;
@@ -1748,13 +1757,40 @@ private:
         m.addItem (6, "Samples",                true, counterMode == 5);
         m.addSeparator();
         m.addItem (10, "Set Tempo... (" + juce::String (tempoBpm, 0) + " BPM)");
+        m.addItem (11, "Set Start Timecode... (" + startTcString() + ")");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this] (int r)
             {
                 if      (r >= 1 && r <= 6) { counterMode = r - 1; saveSettings(); refreshCounters(); }
                 else if (r == 10) setTempoDialog();
+                else if (r == 11) setStartTimecodeDialog();
                 restoreKeyFocus();
             });
+    }
+    juce::String startTcString() const
+    {
+        const double fps = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;
+        const int fpsI = (int) juce::jmax (1.0, std::round (fps));
+        const double t = startOffsetSeconds;
+        return juce::String::formatted ("%02d:%02d:%02d:%02d", (int) (t / 3600.0), ((int) (t / 60.0)) % 60, ((int) t) % 60, ((int) (t * fps)) % fpsI);
+    }
+    void setStartTimecodeDialog()
+    {
+        auto* w = new juce::AlertWindow ("Start Timecode", "Session start (reel start), HH:MM:SS:FF\n(e.g. 01:00:00:00 for a standard reel; 00:00:00:00 to start at zero):", juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("tc", startTcString());
+        w->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+        {
+            std::unique_ptr<juce::AlertWindow> own (w);
+            if (r == 1) { const double s = parsePosition (w->getTextEditorContents ("tc")); startOffsetSeconds = juce::jmax (0.0, s); saveSettings(); refreshCounters(); }
+            restoreKeyFocus();
+        }), false);
+    }
+    void nudgeTempo (int deltaUp)   // drag-on-LCD: +up / -down, 0.2 BPM per pixel
+    {
+        tempoBpm = juce::jlimit (20.0, 300.0, tempoBpm + (double) deltaUp * 0.2);
+        refreshCounters();
     }
     void setTempoDialog()
     {
@@ -1989,8 +2025,8 @@ private:
                 {
                     const bool range = r.len > 0.0;
                     csv << i++ << "," << r.type << ","
-                        << formatTimecode (r.t) << "," << juce::String (r.t, 3) << ","
-                        << (range ? formatTimecode (r.t + r.len) : juce::String()) << ","
+                        << formatTimecode (r.t + startOffsetSeconds) << "," << juce::String (r.t, 3) << ","
+                        << (range ? formatTimecode (r.t + r.len + startOffsetSeconds) : juce::String()) << ","
                         << (range ? juce::String (r.len, 3) : juce::String()) << ","
                         << "\"" << r.name.replace ("\"", "'") << "\"\r\n";
                 }
@@ -2042,14 +2078,14 @@ private:
     void goToTimecode()
     {
         auto* w = new juce::AlertWindow ("Go to position", "HH:MM:SS:FF, M:SS, or seconds:", juce::MessageBoxIconType::NoIcon);
-        w->addTextEditor ("pos", formatTimecode (playhead));
+        w->addTextEditor ("pos", formatTimecode (playhead + startOffsetSeconds));   // matches the on-screen reel timecode
         w->addButton ("Go",     1, juce::KeyPress (juce::KeyPress::returnKey));
         w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
         w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
         {
             std::unique_ptr<juce::AlertWindow> own (w);
-            if (r == 1) { const double s = parsePosition (w->getTextEditorContents ("pos"));
-                          if (s >= 0.0) { playhead = s; seekAll (s); timeline.setPlayhead (s); timeline.repaint(); } }
+            if (r == 1) { double s = parsePosition (w->getTextEditorContents ("pos"));
+                          if (s >= 0.0) { s = juce::jmax (0.0, s - startOffsetSeconds); playhead = s; seekAll (s); timeline.setPlayhead (s); timeline.repaint(); } }
             restoreKeyFocus();
         }), false);
     }
@@ -2475,6 +2511,7 @@ private:
         o->setProperty ("skin", (int) keyProfile);
         o->setProperty ("counterMode", counterMode);
         o->setProperty ("tempo", tempoBpm);
+        o->setProperty ("startTC", startOffsetSeconds);
         f.replaceWithText (juce::JSON::toString (juce::var (o)));
     }
     void loadCounterPrefs()
@@ -2483,6 +2520,7 @@ private:
         if (! v.isObject()) return;
         counterMode = juce::jlimit (0, 5, (int) v.getProperty ("counterMode", 0));
         tempoBpm    = juce::jlimit (20.0, 300.0, (double) v.getProperty ("tempo", 120.0));
+        startOffsetSeconds = juce::jmax (0.0, (double) v.getProperty ("startTC", 0.0));
     }
     KeyProfile loadSavedSkin()   // defaults to Logic if no setting yet
     {
@@ -2721,7 +2759,7 @@ private:
         const double cur = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip].timelineStart;
         auto* w = new juce::AlertWindow ("Spot to location",
                        "Move the selected clip to (HH:MM:SS:FF, M:SS, or seconds):", juce::MessageBoxIconType::NoIcon);
-        w->addTextEditor ("pos", formatTimecode (cur));
+        w->addTextEditor ("pos", formatTimecode (cur + startOffsetSeconds));   // matches the on-screen reel timecode
         w->addButton ("Spot",   1, juce::KeyPress (juce::KeyPress::returnKey));
         w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
         w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
@@ -2729,14 +2767,15 @@ private:
             std::unique_ptr<juce::AlertWindow> own (w);
             if (r == 1 && validClip (selGroup, selTrack, selClip))
             {
-                const double secs = parsePosition (w->getTextEditorContents ("pos"));
+                double secs = parsePosition (w->getTextEditorContents ("pos"));
                 if (secs >= 0.0)
                 {
+                    secs = juce::jmax (0.0, secs - startOffsetSeconds);
                     pushUndo();
                     AudioClip nc = groups[(size_t) selGroup]->tracks[(size_t) selTrack]->clips[(size_t) selClip];
                     nc.timelineStart = secs;
                     clipChanged (selGroup, selTrack, selClip, nc);
-                    titleLabel.setText ("Spotted to " + formatTimecode (secs), juce::dontSendNotification);
+                    titleLabel.setText ("Spotted to " + formatTimecode (secs + startOffsetSeconds), juce::dontSendNotification);
                 }
             }
             restoreKeyFocus();
@@ -3751,10 +3790,19 @@ private:
     LogicInspector  logicInspector;
     ProToolsControlBar ptBar;     // shown only for the Pro Tools station
     BacklineControlBar backlineBar;   // shown only for the Backline (house) skin
-    int    counterMode = 0;           // 0 = Timecode, 1 = Min:Sec, 2 = Bars & Beats (Logic-style clickable LCD)
+    int    counterMode = 0;           // 0 Timecode, 1 Min:Sec, 2 Bars&Beats, 3 Feet+Frames, 4 Frames, 5 Samples
     double tempoBpm    = 120.0;       // for the bars|beats readout
     int    timeSigNum  = 4;           // beats per bar (4/4)
-    struct ClickProxy : public juce::MouseListener { std::function<void()> cb; void mouseDown (const juce::MouseEvent&) override { if (cb) cb(); } } counterClickProxy;
+    double startOffsetSeconds = 0.0;  // session start timecode (reel start, e.g. 01:00:00:00) for TC/Feet+Frames/Frames
+    // Click the counter LCD to open the format menu; drag vertically to nudge tempo (Logic-style).
+    struct ClickProxy : public juce::MouseListener
+    {
+        std::function<void()> cb, release; std::function<void (int)> drag;
+        int lastY = 0; bool moved = false;
+        void mouseDown (const juce::MouseEvent& e) override { lastY = e.y; moved = false; }
+        void mouseDrag (const juce::MouseEvent& e) override { const int d = lastY - e.y; lastY = e.y; if (d != 0) { moved = true; if (drag) drag (d); } }
+        void mouseUp   (const juce::MouseEvent&)   override { if (! moved) { if (cb) cb(); } else if (release) release(); }
+    } counterClickProxy;
 
     int    activeGroup = -1;
     int    selGroup = -1, selTrack = -1, selClip = -1;

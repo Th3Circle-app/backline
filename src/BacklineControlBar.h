@@ -12,6 +12,8 @@ class BacklineControlBar : public juce::Component
 public:
     std::function<void()> onRewind, onStop, onPlay, onRecord, onLoop;
     std::function<void()> onCounterClick;   // click the LCD to choose the readout format
+    std::function<void (int)> onCounterDrag; // drag the LCD vertically to nudge tempo
+    std::function<void()> onCounterRelease;  // drag ended (persist)
     std::function<bool()> isPlaying, isLoop;
 
     BacklineControlBar() { setInterceptsMouseClicks (true, false); }
@@ -93,7 +95,20 @@ public:
                 else if (i == 4) { if (onLoop)   onLoop(); }
                 repaint(); return;
             }
-        if ((mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) && onCounterClick) onCounterClick();
+        if (mainLcd.contains (e.getPosition()) || subLcd.contains (e.getPosition())) { lcdHit = true; lcdMoved = false; lcdLastY = e.y; }
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! lcdHit) return;
+        const int d = lcdLastY - e.y; lcdLastY = e.y;
+        if (d != 0) { lcdMoved = true; if (onCounterDrag) onCounterDrag (d); }
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (! lcdHit) return;
+        if (! lcdMoved) { if (onCounterClick) onCounterClick(); }
+        else if (onCounterRelease) onCounterRelease();
+        lcdHit = false;
     }
 
 private:
@@ -123,6 +138,7 @@ private:
 
     Skin skin = Skin::forDaw (Skin::Layback);
     juce::Rectangle<int> btn[5], mainLcd, subLcd;
+    bool lcdHit = false, lcdMoved = false; int lcdLastY = 0;
     juce::String mainCtr { "00:00:00:00" }, subCtr { "1|1" };
     juce::String pLabel { "TIMECODE" }, sLabel { "BARS|BEATS" };
 };
