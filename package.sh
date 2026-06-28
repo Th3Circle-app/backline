@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Build a Release .dmg of Layback Station that the team can install.
+# Build a Release .dmg of Backline that the team can install.
 #
 # Two modes:
 #   1) Ad-hoc (default, no Apple account):   ./package.sh
@@ -19,7 +19,7 @@
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$ROOT/build-release"
-APPNAME="Layback Station"
+APPNAME="Backline"
 ENTITLEMENTS="$ROOT/entitlements.plist"
 
 echo "==> Configuring + building Release"
@@ -28,6 +28,8 @@ cmake --build "$BUILD" --target LaybackStation --parallel
 
 APP="$BUILD/LaybackStation_artefacts/Release/$APPNAME.app"
 [ -d "$APP" ] || { echo "build failed: $APP not found"; exit 1; }
+
+xattr -cr "$APP"   # strip extended attributes (resource forks) that break codesign
 
 if [ -n "$DEV_ID" ]; then
     echo "==> Developer ID signing (hardened runtime) as: $DEV_ID"
