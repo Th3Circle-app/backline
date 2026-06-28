@@ -19,6 +19,7 @@
 #include "LogicInspector.h"
 #include "ProToolsControlBar.h"
 #include "BacklineControlBar.h"
+#include "TourOverlay.h"
 
 //==============================================================================
 // Multi-video: a project is a stack of video groups (each = one video + its own
@@ -237,6 +238,9 @@ public:
         backlineBar.onCounterDrag  = [this] (int d) { nudgeTempo (d); };
         backlineBar.onCounterRelease = [this] { saveSettings(); };
         addChildComponent (backlineBar);
+
+        tour.onClose = [this] { restoreKeyFocus(); };
+        addChildComponent (tour);
 
         openButton.setButtonText ("Add Video...");
         openButton.onClick = [this] { openAddVideo(); };
@@ -874,6 +878,12 @@ public:
             case 3: layoutProTools();        break;   // Pro Tools: green-counter transport bar
             case 2: layoutAbleton();         break;   // Ableton
             default: layoutDefault();        break;   // Layback
+        }
+        if (tour.isVisible()) { tour.setBounds (getLocalBounds()); tour.relayout(); }
+        if (tourPending && getWidth() > 400 && getHeight() > 300)   // first launch: run once layout has settled
+        {
+            tourPending = false;
+            juce::MessageManager::callAsync ([this] { startTour(); });
         }
     }
 
@@ -2433,6 +2443,7 @@ private:
         }
         else if (name == "Help")
         {
+            m.addItem (9099, "Guided Tour");
             m.addItem (9098, "Backline Help");
         }
         return m;
@@ -2473,6 +2484,7 @@ private:
             case 9076: applyFade (1, 2); break;  case 9077: applyFade (1, 3); break;
             case 9078: applyFade (2); break;
             case 9098: openHelpWindow(); break;
+            case 9099: startTour();      break;
             case 9060: showVideoWindow (! videoWindowOpen); break;
             case 9062: autoMode = (autoMode == 1 ? 0 : 1);
                        titleLabel.setText (autoMode == 1 ? "Automation: Latch - move a fader while playing to write the ride"
@@ -2498,6 +2510,78 @@ private:
     }
 
     //== global app settings (remember the chosen skin across launches) ==
+    //== Guided onboarding tour ==
+    juce::Rectangle<int> tourBarBounds()
+    {
+        if (backlineBar.isVisible()) return backlineBar.getBounds();
+        if (logicBar.isVisible())    return logicBar.getBounds();
+        if (ptBar.isVisible())       return ptBar.getBounds();
+        return getLocalBounds().removeFromTop (56);
+    }
+    juce::Rectangle<int> tourCounterBounds()
+    {
+        auto b = tourBarBounds();
+        return juce::Rectangle<int> (b.getCentreX() - 150, b.getY() + 5, 300, juce::jmax (24, b.getHeight() - 10)).getIntersection (b);
+    }
+    static juce::Rectangle<int> orEmpty (juce::Component& c) { return c.isVisible() ? c.getBounds() : juce::Rectangle<int>(); }
+
+    void startTour()
+    {
+        std::vector<TourOverlay::Step> s;
+        auto add = [&] (std::function<juce::Rectangle<int>()> t, juce::String title, juce::String body)
+                   { s.push_back ({ std::move (t), std::move (title), std::move (body) }); };
+
+        add ({}, "Welcome to Backline",
+             "Backline is a music-to-picture studio: drop in locked picture, fit and cut music to it, mix, and deliver. "
+             "This quick tour shows where everything lives. Use Next / Back, or press Esc to skip any time.");
+        add ([this]{ return tourBarBounds(); }, "Transport",
+             "Play, stop, return-to-start, record, and cycle/loop live here. Spacebar plays and stops. The video always "
+             "follows the audio playhead, so picture stays locked to your edit.");
+        add ([this]{ return tourCounterBounds(); }, "The counter",
+             "Click the big counter to choose how time reads: Timecode, Bars & Beats, Feet+Frames (35mm), Frames, or Samples. "
+             "Drag it up/down to nudge tempo, and set the reel's Start Timecode (e.g. 01:00:00:00) from the same menu.");
+        add ([this]{ return orEmpty (openButton); }, "Add video",
+             "Add Video imports your locked picture into a viewer you can pop out or full-screen. It chases the audio so every "
+             "cut lands frame-accurately.");
+        add ([this]{ return orEmpty (projectButton); }, "Projects",
+             "New, open, and save sessions as .lbproj files. Backline autosaves and recovers your session if it ever quits unexpectedly.");
+        add ([this]{ return timelineViewport.getBounds(); }, "The timeline",
+             "Your tracks live here. Drag audio files straight onto the timeline to add clips, then move, trim, split, and fade "
+             "them. Snap keeps edits on the grid and on video frames.");
+        add ([this]{ auto t = timelineViewport.getBounds(); return juce::Rectangle<int> (t.getX(), t.getY(), 150, juce::jmin (170, t.getHeight())); },
+             "Track headers",
+             "Each header has the track name, Mute (M), Solo (S), Record-arm (R) and volume. Right-click a track or clip for the "
+             "full menu: fades, time-stretch, pitch-shift, normalize, and more.");
+        add ([this]{ return orEmpty (snapToggle); }, "Snap to frame",
+             "With Snap on, clips lock to the grid and to whole video frames, so a hit lands exactly on the cut. Toggle it off for free placement.");
+        add ([this]{ return orEmpty (videoButton); }, "Picture controls",
+             "Slide or lock the video, see detected scene cuts, and view a filmstrip right on the clip. The film can carry its own "
+             "audio track and effects.");
+        add ({}, "Split stems",
+             "Right-click an audio clip -> Split Stems to separate a song into vocals / drums / bass / other, perfect for ducking "
+             "music under dialogue or rebuilding a cue. First use downloads the model (one-time, needs internet).");
+        add ([this]{ return mixerVisible ? mixerView.getBounds() : juce::Rectangle<int>(); }, "The mixer",
+             "Open the mixer (View menu) for faders, pan, meters, and inserts. Route tracks to Submix buses, use the FX send, and "
+             "watch LUFS + true-peak on the Master strip, the loudness spec your deliverable must hit.");
+        add ([this]{ return mixerVisible ? mixerView.getBounds() : juce::Rectangle<int>(); }, "Effects & plugins",
+             "Click a strip's insert slot to add built-in EQ / Compressor / Reverb / Delay / Limiter / Gate, or any AU / VST3 plugin "
+             "you own. Backline compensates for plugin latency so nothing drifts off picture.");
+        add ([this]{ return orEmpty (keysButton); }, "Skins",
+             "Switch the whole look and keymap between Backline, Logic, Pro Tools, and Ableton, whatever feels like home. Every "
+             "skin has its own transport, inspector, and counter.");
+        add ([this]{ return orEmpty (exportButton); }, "Export & deliver",
+             "Bounce the mix (optionally loudness-normalized to -14 / -16 / -23 / -24 LUFS, true-peak safe), export per-track stems, "
+             "or render the mix back against the video. Export a cue list (.csv) of your hit points for the editor.");
+        add ({}, "You're ready",
+             "That's the tour. Reopen it any time from Help -> Guided Tour. Tip: right-click almost anything for context options. "
+             "Have fun scoring to picture!");
+
+        tour.setSkin (laf.skin);
+        tour.setBounds (getLocalBounds());
+        tour.start (std::move (s));
+        if (! tourShown) { tourShown = true; saveSettings(); }
+    }
+
     juce::File settingsFile() const
     {
         return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
@@ -2512,6 +2596,7 @@ private:
         o->setProperty ("counterMode", counterMode);
         o->setProperty ("tempo", tempoBpm);
         o->setProperty ("startTC", startOffsetSeconds);
+        o->setProperty ("tourShown", tourShown);
         f.replaceWithText (juce::JSON::toString (juce::var (o)));
     }
     void loadCounterPrefs()
@@ -2521,6 +2606,8 @@ private:
         counterMode = juce::jlimit (0, 5, (int) v.getProperty ("counterMode", 0));
         tempoBpm    = juce::jlimit (20.0, 300.0, (double) v.getProperty ("tempo", 120.0));
         startOffsetSeconds = juce::jmax (0.0, (double) v.getProperty ("startTC", 0.0));
+        tourShown = (bool) v.getProperty ("tourShown", false);
+        tourPending = ! tourShown;   // first ever launch -> auto-run the tour once laid out
     }
     KeyProfile loadSavedSkin()   // defaults to Logic if no setting yet
     {
@@ -3790,6 +3877,9 @@ private:
     LogicInspector  logicInspector;
     ProToolsControlBar ptBar;     // shown only for the Pro Tools station
     BacklineControlBar backlineBar;   // shown only for the Backline (house) skin
+    TourOverlay tour;                 // guided onboarding tour (first launch + Help menu)
+    bool tourPending = false;         // run the tour once layout settles on first launch
+    bool tourShown = false;           // persisted: has the tour ever auto-run
     int    counterMode = 0;           // 0 Timecode, 1 Min:Sec, 2 Bars&Beats, 3 Feet+Frames, 4 Frames, 5 Samples
     double tempoBpm    = 120.0;       // for the bars|beats readout
     int    timeSigNum  = 4;           // beats per bar (4/4)
