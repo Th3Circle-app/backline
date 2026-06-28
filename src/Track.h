@@ -42,7 +42,8 @@ struct AudioTrack
 /** A named timeline marker (scene/hit point) for syncing music to picture. */
 struct Marker
 {
-    double       time = 0.0;   // position on the timeline (seconds)
+    double       time   = 0.0;   // position on the timeline (seconds)
+    double       length = 0.0;   // 0 = point cue; > 0 = a named range (cue spans [time, time+length])
     juce::String name;
 };
 

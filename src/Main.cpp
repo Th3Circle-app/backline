@@ -1703,6 +1703,7 @@ private:
         m.addSubMenu ("Export video, loudness-normalized", normV);
         m.addSeparator();
         m.addItem (3, "Export stems (one WAV per track)...");
+        m.addItem (4, "Export cue list (.csv)...");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton),
             [this] (int r)
             {
@@ -1710,6 +1711,7 @@ private:
                 if      (r == 1) exportVideo();
                 else if (r == 2) exportAudio();
                 else if (r == 3) exportStems();
+                else if (r == 4) exportCueList();
                 else if (r >= 10 && r <= 13) exportAudio (tg[r - 10]);
                 else if (r >= 20 && r <= 23) exportVideo (tg[r - 20]);
                 restoreKeyFocus();
@@ -1860,10 +1862,61 @@ private:
         if (! validGroup (activeGroup)) { titleLabel.setText ("Open a video to add markers", juce::dontSendNotification); return; }
         auto& mks = groups[(size_t) activeGroup]->markers;
         pushUndo();
-        mks.push_back ({ playhead, "Marker " + juce::String ((int) mks.size() + 1) });
+        mks.push_back ({ playhead, 0.0, "Marker " + juce::String ((int) mks.size() + 1) });
         std::sort (mks.begin(), mks.end(), [] (const Marker& a, const Marker& b) { return a.time < b.time; });
         timeline.repaint();
         titleLabel.setText ("Marker added at " + formatTimecode (playhead), juce::dontSendNotification);
+    }
+    // Turn the current loop region into a named cue range (a marker that spans a length).
+    void addCueRangeFromLoop()
+    {
+        if (! validGroup (activeGroup)) { titleLabel.setText ("Open a video first", juce::dontSendNotification); return; }
+        if (! loopEnabled || loopEnd <= loopStart) { titleLabel.setText ("Set a loop region first (its span becomes the cue range)", juce::dontSendNotification); return; }
+        auto& mks = groups[(size_t) activeGroup]->markers;
+        pushUndo();
+        mks.push_back ({ loopStart, loopEnd - loopStart, "Cue " + juce::String ((int) mks.size() + 1) });
+        std::sort (mks.begin(), mks.end(), [] (const Marker& a, const Marker& b) { return a.time < b.time; });
+        timeline.repaint();
+        titleLabel.setText ("Cue range added (" + formatTimecode (loopStart) + " - " + formatTimecode (loopEnd) + ")", juce::dontSendNotification);
+    }
+    // Export all cues (markers + ranges + scene cuts) as a frame-accurate CSV for handoff.
+    void exportCueList()
+    {
+        if (! validGroup (activeGroup)) { titleLabel.setText ("Open a video first", juce::dontSendNotification); return; }
+        auto* g = groups[(size_t) activeGroup].get();
+        const juce::String base = g->file.getFileNameWithoutExtension();
+        chooser = std::make_unique<juce::FileChooser> ("Export cue list",
+                    juce::File ("~/Desktop").getChildFile (base + " - cues.csv"), "*.csv");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this, g] (const juce::FileChooser& fc)
+            {
+                restoreKeyFocus();
+                const auto out = fc.getResult();
+                if (out == juce::File()) return;
+                struct Row { double t; juce::String type, name; double len; };
+                std::vector<Row> rows;
+                for (auto& m : g->markers) rows.push_back ({ m.time, m.length > 0.0 ? "Range" : "Marker", m.name, m.length });
+                int ci = 1;
+                for (double c : g->cutMarkers) rows.push_back ({ c, "Cut", "Scene cut " + juce::String (ci++), 0.0 });
+                std::sort (rows.begin(), rows.end(), [] (const Row& a, const Row& b) { return a.t < b.t; });
+
+                juce::String csv = "Index,Type,Start (TC),Start (s),End (TC),Length (s),Name\r\n";
+                int i = 1;
+                for (auto& r : rows)
+                {
+                    const bool range = r.len > 0.0;
+                    csv << i++ << "," << r.type << ","
+                        << formatTimecode (r.t) << "," << juce::String (r.t, 3) << ","
+                        << (range ? formatTimecode (r.t + r.len) : juce::String()) << ","
+                        << (range ? juce::String (r.len, 3) : juce::String()) << ","
+                        << "\"" << r.name.replace ("\"", "'") << "\"\r\n";
+                }
+                if (out.replaceWithText (csv))
+                    titleLabel.setText ("Exported " + juce::String ((int) rows.size()) + " cues: " + out.getFileName(), juce::dontSendNotification);
+                else
+                    titleLabel.setText ("Cue list export failed.", juce::dontSendNotification);
+            });
     }
     void gotoAdjacentMarker (int dir)
     {
@@ -2108,6 +2161,9 @@ private:
             mm.addCommandItem (&commandManager, LSCmd::AddMarker);
             mm.addCommandItem (&commandManager, LSCmd::PrevMarker);
             mm.addCommandItem (&commandManager, LSCmd::NextMarker);
+            mm.addSeparator();
+            mm.addItem (9080, "Add Cue Range from Loop");
+            mm.addItem (9081, "Export Cue List (.csv)...");
             if (validGroup (activeGroup) && ! groups[(size_t) activeGroup]->markers.empty())
             {
                 mm.addSeparator();
@@ -2274,6 +2330,8 @@ private:
             case 9004: openAddVideo();  break;
             case 9005: exportVideo();   break;
             case 9006: exportAudio();   break;
+            case 9080: addCueRangeFromLoop(); break;
+            case 9081: exportCueList();  break;
             case 9007: relinkMissingMedia(); break;
             case 9010: if (activeGroup >= 0) importTrack (activeGroup); break;
             case 9011: insertEffectAndEdit (0); break;
@@ -3083,7 +3141,7 @@ private:
             go->setProperty ("videoLocked", g->videoLocked);
             go->setProperty ("cuts", doublesToVar (g->cutMarkers));
             juce::var marr;
-            for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
+            for (auto& mk : g->markers) { auto* mo = new juce::DynamicObject(); mo->setProperty ("t", mk.time); mo->setProperty ("len", mk.length); mo->setProperty ("name", mk.name); marr.append (juce::var (mo)); }
             go->setProperty ("markers", marr);
 
             juce::var tarr;
@@ -3347,7 +3405,7 @@ private:
                 grp->videoLocked = (bool)   gv.getProperty ("videoLocked", true);
                 grp->cutMarkers = varToDoubles (gv["cuts"]);
                 if (auto* ma = gv["markers"].getArray())
-                    for (auto& mv : *ma) grp->markers.push_back ({ (double) mv.getProperty ("t", 0.0), mv["name"].toString() });
+                    for (auto& mv : *ma) grp->markers.push_back ({ (double) mv.getProperty ("t", 0.0), (double) mv.getProperty ("len", 0.0), mv["name"].toString() });
                 if (! grp->file.existsAsFile()) ++missingMedia;
 
                 if (auto* tarr = gv["tracks"].getArray())
