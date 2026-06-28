@@ -22,6 +22,10 @@ public:
     {
         if (primary != lcdMain || secondary != lcdSub) { lcdMain = primary; lcdSub = secondary; repaint(); }
     }
+    void setCounterLabels (const juce::String& a, const juce::String& b)
+    {
+        if (a != pLabel || b != sLabel) { pLabel = a; sLabel = b; repaint(); }
+    }
 
     void resized() override
     {
@@ -101,8 +105,8 @@ public:
         auto left = l.removeFromLeft (l.getWidth() * 0.46f);
         g.setColour (juce::Colour (0x44000000)); g.fillRect (l.getX(), l.getY() + 4.0f, 1.0f, l.getHeight() - 8.0f);
         g.setColour (lcdLabel); g.setFont (juce::Font (juce::FontOptions().withHeight (8.0f)));
-        g.drawText ("BARS  BEATS", left.reduced (8.0f, 3.0f).removeFromTop (9.0f), juce::Justification::topLeft, false);
-        g.drawText ("MIN : SEC",   l.reduced (8.0f, 3.0f).removeFromTop (9.0f),   juce::Justification::topLeft, false);
+        g.drawText (pLabel, left.reduced (8.0f, 3.0f).removeFromTop (9.0f), juce::Justification::topLeft, false);
+        g.drawText (sLabel, l.reduced (8.0f, 3.0f).removeFromTop (9.0f),   juce::Justification::topLeft, false);
         g.setColour (lcdText); g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 17.0f, juce::Font::bold)));
         g.drawText (lcdMain, left.reduced (8.0f, 2.0f), juce::Justification::centred, false);
         g.drawText (lcdSub,  l.reduced (8.0f, 2.0f),    juce::Justification::centred, false);
@@ -130,4 +134,5 @@ private:
     Skin skin = Skin::forDaw (Skin::Logic);
     juce::Rectangle<int> btn[5], lcd, leftBtns[2];
     juce::String lcdMain { "1  1" }, lcdSub { "0:00.00" };
+    juce::String pLabel { "BARS  BEATS" }, sLabel { "MIN : SEC" };
 };

@@ -21,6 +21,10 @@ public:
     {
         if (main != mainCtr || sub != subCtr) { mainCtr = main; subCtr = sub; repaint(); }
     }
+    void setCounterLabels (const juce::String& a, const juce::String& b)
+    {
+        if (a != pLabel || b != sLabel) { pLabel = a; sLabel = b; repaint(); }
+    }
 
     void resized() override
     {
@@ -69,8 +73,8 @@ public:
             }
         }
 
-        led (g, mainLcd, "TIMECODE",   mainCtr, 25.0f);
-        led (g, subLcd,  "BARS|BEATS",  subCtr, 15.0f);
+        led (g, mainLcd, pLabel, mainCtr, 25.0f);
+        led (g, subLcd,  sLabel, subCtr, 15.0f);
 
         // the "lay-back line" accent hairline under the bar
         g.setGradientFill (juce::ColourGradient (skin.accent, 0.0f, 0.0f, juce::Colour (0xff3fe0ff), (float) getWidth(), 0.0f, false));
@@ -120,4 +124,5 @@ private:
     Skin skin = Skin::forDaw (Skin::Layback);
     juce::Rectangle<int> btn[5], mainLcd, subLcd;
     juce::String mainCtr { "00:00:00:00" }, subCtr { "1|1" };
+    juce::String pLabel { "TIMECODE" }, sLabel { "BARS|BEATS" };
 };

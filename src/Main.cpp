@@ -1695,31 +1695,47 @@ private:
             });
     }
 
-    // Logic-style clickable counter: build the primary + secondary readout strings for the chosen mode.
-    void counterStrings (double t, juce::String& primary, juce::String& secondary) const
+    // Logic-style clickable counter: value string + its label for a given mode.
+    // Modes: 0 Timecode, 1 Min:Sec, 2 Bars&Beats, 3 Feet+Frames (35mm), 4 Frames, 5 Samples.
+    void counterValueLabel (double t, int mode, juce::String& val, juce::String& label) const
     {
         const double fps  = video.getFrameRate() > 1.0 ? video.getFrameRate() : 30.0;
         const int    fpsI = (int) juce::jmax (1.0, std::round (fps));
-        const int tcH = (int) (t / 3600.0), tcM = ((int) (t / 60.0)) % 60, tcS = ((int) t) % 60, tcF = ((int) (t * fps)) % fpsI;
-        const juce::String tc = juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF);
-        const juce::String ms = formatTime (t);
-        const double spb   = 60.0 / juce::jmax (1.0, tempoBpm);
-        const double spbar = spb * juce::jmax (1, timeSigNum);
-        const int bar  = (int) (t / spbar) + 1;
-        const int beat = juce::jlimit (1, timeSigNum, (int) ((t - (double) (bar - 1) * spbar) / spb) + 1);
-        const juce::String bb = juce::String (bar) + "|" + juce::String (beat);
-        switch (counterMode)
+        switch (mode)
         {
-            case 1:  primary = ms; secondary = bb; break;   // Min:Sec
-            case 2:  primary = bb; secondary = tc; break;   // Bars & Beats
-            default: primary = tc; secondary = bb; break;   // Timecode
+            case 1:  val = formatTime (t); label = "MIN : SEC"; break;
+            case 2:
+            {
+                const double spb = 60.0 / juce::jmax (1.0, tempoBpm), spbar = spb * juce::jmax (1, timeSigNum);
+                const int bar = (int) (t / spbar) + 1;
+                const int beat = juce::jlimit (1, timeSigNum, (int) ((t - (double) (bar - 1) * spbar) / spb) + 1);
+                val = juce::String (bar) + "|" + juce::String (beat); label = "BARS|BEATS"; break;
+            }
+            case 3:   // Feet+Frames, 35mm = 16 frames per foot, at the project frame rate
+            {
+                const juce::int64 tf = (juce::int64) (t * fps);
+                val = juce::String (tf / 16) + "+" + juce::String ((int) (tf % 16)).paddedLeft ('0', 2);
+                label = "FEET+FRAMES"; break;
+            }
+            case 4:  val = juce::String ((juce::int64) (t * fps)); label = "FRAMES"; break;
+            case 5:  val = juce::String ((juce::int64) (t * audioEngine.sampleRate())); label = "SAMPLES"; break;
+            default:
+            {
+                const int tcH = (int) (t / 3600.0), tcM = ((int) (t / 60.0)) % 60, tcS = ((int) t) % 60, tcF = ((int) (t * fps)) % fpsI;
+                val = juce::String::formatted ("%02d:%02d:%02d:%02d", tcH, tcM, tcS, tcF); label = "TIMECODE"; break;
+            }
         }
     }
     void refreshCounters()
     {
-        juce::String pri, sec; counterStrings (playhead, pri, sec);
-        logicBar.setPosition (pri, sec); ptBar.setPosition (pri, sec); backlineBar.setPosition (pri, sec);
-        timeLabel.setText (pri + "   " + sec, juce::dontSendNotification);
+        const int secMode = (counterMode == 0) ? 2 : 0;   // companion line: timecode shows bars, everything else shows timecode
+        juce::String pv, pl, sv, sl;
+        counterValueLabel (playhead, counterMode, pv, pl);
+        counterValueLabel (playhead, secMode,     sv, sl);
+        logicBar.setPosition (pv, sv);    logicBar.setCounterLabels (pl, sl);
+        ptBar.setPosition (pv, sv);       ptBar.setCounterLabels (pl, sl);
+        backlineBar.setPosition (pv, sv); backlineBar.setCounterLabels (pl, sl);
+        timeLabel.setText (pv + "   " + sv, juce::dontSendNotification);
     }
     void showCounterMenu()
     {
@@ -1727,13 +1743,16 @@ private:
         m.addItem (1, "Timecode (HH:MM:SS:FF)", true, counterMode == 0);
         m.addItem (2, "Minutes : Seconds",      true, counterMode == 1);
         m.addItem (3, "Bars & Beats",           true, counterMode == 2);
+        m.addItem (4, "Feet+Frames (35mm)",     true, counterMode == 3);
+        m.addItem (5, "Frames",                 true, counterMode == 4);
+        m.addItem (6, "Samples",                true, counterMode == 5);
         m.addSeparator();
-        m.addItem (4, "Set Tempo... (" + juce::String (tempoBpm, 0) + " BPM)");
+        m.addItem (10, "Set Tempo... (" + juce::String (tempoBpm, 0) + " BPM)");
         m.showMenuAsync (juce::PopupMenu::Options(),
             [this] (int r)
             {
-                if      (r >= 1 && r <= 3) { counterMode = r - 1; saveSettings(); refreshCounters(); }
-                else if (r == 4) setTempoDialog();
+                if      (r >= 1 && r <= 6) { counterMode = r - 1; saveSettings(); refreshCounters(); }
+                else if (r == 10) setTempoDialog();
                 restoreKeyFocus();
             });
     }
@@ -2462,7 +2481,7 @@ private:
     {
         const auto v = juce::JSON::parse (settingsFile().loadFileAsString());
         if (! v.isObject()) return;
-        counterMode = juce::jlimit (0, 2, (int) v.getProperty ("counterMode", 0));
+        counterMode = juce::jlimit (0, 5, (int) v.getProperty ("counterMode", 0));
         tempoBpm    = juce::jlimit (20.0, 300.0, (double) v.getProperty ("tempo", 120.0));
     }
     KeyProfile loadSavedSkin()   // defaults to Logic if no setting yet

@@ -22,6 +22,10 @@ public:
     {
         if (main != mainCtr || sub != subCtr) { mainCtr = main; subCtr = sub; repaint(); }
     }
+    void setCounterLabels (const juce::String& a, const juce::String& b)
+    {
+        if (a != pLabel || b != sLabel) { pLabel = a; sLabel = b; repaint(); }
+    }
 
     void resized() override
     {
@@ -106,8 +110,8 @@ public:
             g.setColour (lcdGrn); g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), sz, juce::Font::bold)));
             g.drawText (value, rf.reduced (6.0f, 2.0f), juce::Justification::centredRight, false);
         };
-        led (mainLcd, "TIMECODE",   mainCtr, 24.0f);
-        led (subLcd,  "BARS|BEATS", subCtr, 14.0f);
+        led (mainLcd, pLabel, mainCtr, 24.0f);
+        led (subLcd,  sLabel, subCtr, 14.0f);
 
         for (int i = 0; i < 4; ++i)                              // edit-mode cluster (right): shuffle/slip/spot/grid
         {
@@ -144,4 +148,5 @@ private:
     Skin skin = Skin::forDaw (Skin::ProTools);
     juce::Rectangle<int> tool[5], btn[5], mode[4], mainLcd, subLcd;
     juce::String mainCtr { "00:00:00" }, subCtr { "1|1" };
+    juce::String pLabel { "TIMECODE" }, sLabel { "BARS|BEATS" };
 };
