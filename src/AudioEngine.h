@@ -161,6 +161,9 @@ private:
         std::vector<std::unique_ptr<juce::AudioProcessor>> chain;   // per-track insert FX (native + hosted)
         std::vector<std::pair<double, float>> autoEnv;   // volume envelope (time, gain), sorted; read under lock
         std::atomic<bool>        autoOn { false };        // use the envelope instead of the static gain
+        std::atomic<int>         compDelay { 0 };         // PDC: samples to delay this track's output to align with the latency graph
+        std::vector<float>       dlBuf[2];                // PDC delay ring (sized on the message thread under the lock)
+        int                      dlPos = 0;
     };
 
     class Mixer : public juce::PositionableAudioSource
@@ -176,6 +179,7 @@ private:
         bool isLooping() const override                    { return false; }
 
         void recomputeLength();
+        void recomputePDC();                               // recompute per-track PDC delays from plugin latencies
         void ensureScratch (int channels, int samples);   // non-realtime only (prepare / offline render)
 
         juce::CriticalSection lock;

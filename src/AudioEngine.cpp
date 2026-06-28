@@ -46,6 +46,45 @@ void AudioEngine::Mixer::recomputeLength()
     totalLen.store (len, std::memory_order_relaxed);
 }
 
+// Plugin delay compensation: delay each track so all paths line up at the master.
+// path latency = track chain latency + (its destination bus's chain latency). Each track is
+// delayed by (globalMax - itsPathLatency). Runs under the lock (exclusive with the audio thread).
+void AudioEngine::Mixer::recomputePDC()
+{
+    const juce::ScopedLock sl (lock);
+    const int blk = preparedBlock.load();
+    auto chainLat = [] (const std::vector<std::unique_ptr<juce::AudioProcessor>>& chain)
+    {
+        int L = 0; for (auto& p : chain) if (p != nullptr) L += juce::jmax (0, p->getLatencySamples());
+        return L;
+    };
+    std::vector<int> busLat (buses.size(), 0);
+    for (size_t i = 0; i < buses.size(); ++i) busLat[i] = chainLat (buses[i]->chain);
+
+    std::vector<int> pathLat (tracks.size(), 0);
+    int globalMax = 0;
+    for (size_t i = 0; i < tracks.size(); ++i)
+    {
+        int L = chainLat (tracks[i]->chain);
+        const int o = tracks[i]->output.load();
+        if (o >= 0 && o < (int) buses.size()) L += busLat[(size_t) o];
+        pathLat[i] = L; globalMax = juce::jmax (globalMax, L);
+    }
+    for (size_t i = 0; i < tracks.size(); ++i)
+    {
+        auto* t = tracks[i].get();
+        const int cd = juce::jmax (0, globalMax - pathLat[i]);
+        const int need = cd + blk + 8;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            if ((int) t->dlBuf[ch].size() < need) t->dlBuf[ch].assign ((size_t) need, 0.0f);
+            else std::fill (t->dlBuf[ch].begin(), t->dlBuf[ch].end(), 0.0f);
+        }
+        t->dlPos = 0;
+        t->compDelay.store (cd);
+    }
+}
+
 void AudioEngine::Mixer::prepareToPlay (int samplesPerBlock, double sr)
 {
     rate = sr;
@@ -66,6 +105,7 @@ void AudioEngine::Mixer::prepareToPlay (int samplesPerBlock, double sr)
                 p->prepareToPlay (sr, blk);
             }
     recomputeLength();
+    recomputePDC();
 }
 
 void AudioEngine::Mixer::ensureScratch (int channels, int samples)   // non-realtime only
@@ -185,6 +225,27 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
             for (int i = 0; i < n; ++i) pk = juce::jmax (pk, std::abs (d[i]));
         }
         t->peak.store (pk * g, std::memory_order_relaxed);
+
+        // 2b) plugin delay compensation: delay this track's output to align with the latency graph
+        if (const int cd = t->compDelay.load(); cd > 0 && (int) t->dlBuf[0].size() > cd && (int) t->dlBuf[1].size() > cd)
+        {
+            const int sz = (int) t->dlBuf[0].size();
+            const int dch = juce::jmin (numCh, 2);
+            int p = t->dlPos;
+            for (int i = 0; i < n; ++i)
+            {
+                const int rp = (p - cd + sz) % sz;
+                for (int ch = 0; ch < dch; ++ch)
+                {
+                    float* s = scratch.getWritePointer (ch);
+                    const float out = t->dlBuf[ch][(size_t) rp];
+                    t->dlBuf[ch][(size_t) p] = s[i];
+                    s[i] = out;
+                }
+                p = (p + 1 >= sz) ? 0 : p + 1;
+            }
+            t->dlPos = p;
+        }
 
         // 3) sum into the output with channel gain + pan
         if (g > 0.0001f)
@@ -769,6 +830,7 @@ void AudioEngine::addProcessorToTrack (int trackId, std::unique_ptr<juce::AudioP
         const juce::ScopedLock sl (mixer.lock);
         if (auto* t = findTrack (trackId)) t->chain.push_back (std::move (p));
     }
+    mixer.recomputePDC();
     // if the track wasn't found, p frees here (outside the lock)
 }
 
@@ -838,7 +900,7 @@ int  AudioEngine::busCount() { const juce::ScopedLock sl (mixer.lock); return (i
 juce::String AudioEngine::busName (int idx)
 { const juce::ScopedLock sl (mixer.lock); return (idx >= 0 && idx < (int) mixer.buses.size()) ? mixer.buses[(size_t) idx]->name : juce::String(); }
 void AudioEngine::setTrackOutput (int trackId, int out)
-{ const juce::ScopedLock sl (mixer.lock); if (auto* t = findTrack (trackId)) t->output.store (out); }
+{ { const juce::ScopedLock sl (mixer.lock); if (auto* t = findTrack (trackId)) t->output.store (out); } mixer.recomputePDC(); }
 int  AudioEngine::getTrackOutput (int trackId)
 { const juce::ScopedLock sl (mixer.lock); if (auto* t = findTrack (trackId)) return t->output.load(); return -1; }
 void  AudioEngine::setBusGain (int idx, float g) { const juce::ScopedLock sl (mixer.lock); if (idx >= 0 && idx < (int) mixer.buses.size()) mixer.buses[(size_t) idx]->gain.store (juce::jmax (0.0f, g)); }
@@ -850,8 +912,9 @@ void AudioEngine::addBusEffect (int idx, int which)
 {
     auto p = makeNativeEffect (which);
     prepareProcessor (*p);
-    const juce::ScopedLock sl (mixer.lock);
-    if (idx >= 0 && idx < (int) mixer.buses.size()) mixer.buses[(size_t) idx]->chain.push_back (std::move (p));
+    { const juce::ScopedLock sl (mixer.lock);
+      if (idx >= 0 && idx < (int) mixer.buses.size()) mixer.buses[(size_t) idx]->chain.push_back (std::move (p)); }
+    mixer.recomputePDC();
 }
 int AudioEngine::busPluginCount (int idx) { const juce::ScopedLock sl (mixer.lock); return (idx >= 0 && idx < (int) mixer.buses.size()) ? (int) mixer.buses[(size_t) idx]->chain.size() : 0; }
 juce::AudioProcessor* AudioEngine::busPlugin (int idx, int index)
@@ -863,6 +926,7 @@ void AudioEngine::removeBusPlugin (int idx, int index)
     std::unique_ptr<juce::AudioProcessor> doomed;
     { const juce::ScopedLock sl (mixer.lock);
       if (idx >= 0 && idx < (int) mixer.buses.size()) { auto& c = mixer.buses[(size_t) idx]->chain; if (index >= 0 && index < (int) c.size()) { doomed = std::move (c[(size_t) index]); c.erase (c.begin() + index); } } }
+    mixer.recomputePDC();
 }
 void AudioEngine::removeBus (int idx)
 {
@@ -874,6 +938,7 @@ void AudioEngine::removeBus (int idx)
       for (auto& t : mixer.tracks)   // re-point routings
       { const int o = t->output.load(); if (o == idx) t->output.store (-1); else if (o > idx) t->output.store (o - 1); }
     }
+    mixer.recomputePDC();
 }
 
 bool AudioEngine::addHostedPlugin (int trackId, const juce::PluginDescription& desc, juce::String& error)
@@ -1022,5 +1087,6 @@ void AudioEngine::removeTrackPlugin (int trackId, int index)
                 t->chain.erase (t->chain.begin() + index);
             }
     }
+    mixer.recomputePDC();
     if (doomed != nullptr) doomed->releaseResources();
 }
