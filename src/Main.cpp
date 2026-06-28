@@ -1490,7 +1490,7 @@ private:
             });
     }
 
-    void exportVideo()
+    void exportVideo (double normLufs = 0.0)   // normLufs < 0 => loudness-normalize the mix before muxing
     {
         auto* ag = activeGroupPtr();
         if (ag == nullptr) return;
@@ -1501,11 +1501,11 @@ private:
         const juce::String base = videoFile.getFileNameWithoutExtension();
 
         chooser = std::make_unique<juce::FileChooser> ("Export video (choose format by extension)",
-                    juce::File ("~/Desktop").getChildFile (base + " - Layback.mp4"),
+                    juce::File ("~/Desktop").getChildFile (base + " - Backline.mp4"),
                     "*.mp4;*.mov;*.m4v;*.mkv;*.webm;*.avi;*.mxf;*.wmv");
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
-            [this, videoFile, len] (const juce::FileChooser& fc)
+            [this, videoFile, len, normLufs] (const juce::FileChooser& fc)
             {
                 restoreKeyFocus();
                 const auto out = fc.getResult();
@@ -1513,12 +1513,13 @@ private:
 
                 pauseAll();
                 auto tmpWav = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                  .getChildFile ("layback_export_mix.wav");
+                                  .getChildFile ("backline_export_mix.wav");
                 if (! audioEngine.renderMixToFile (tmpWav, len))
                 {
                     titleLabel.setText ("Export failed (audio render).", juce::dontSendNotification);
                     return;
                 }
+                if (normLufs < 0.0) { juce::String rep; audioEngine.normalizeFileToLufs (tmpWav, (float) normLufs, -1.0f, rep); }
 
                 exportButton.setEnabled (false);
                 exportButton.setButtonText ("Exporting...");
@@ -1578,7 +1579,7 @@ private:
         }).detach();
     }
 
-    void exportAudio()
+    void exportAudio (double normLufs = 0.0)   // normLufs < 0 => loudness-normalize to that target
     {
         auto* ag = activeGroupPtr();
         if (ag == nullptr) return;
@@ -1587,29 +1588,91 @@ private:
 
         const juce::String base = ag->file.getFileNameWithoutExtension();
         chooser = std::make_unique<juce::FileChooser> ("Export audio",
-                    juce::File ("~/Desktop").getChildFile (base + " - Layback.wav"), "*.wav");
+                    juce::File ("~/Desktop").getChildFile (base + " - Backline.wav"), "*.wav");
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
-            [this, len] (const juce::FileChooser& fc)
+            [this, len, normLufs] (const juce::FileChooser& fc)
             {
                 restoreKeyFocus();
                 const auto out = fc.getResult();
                 if (out == juce::File()) return;
                 pauseAll();
-                if (audioEngine.renderMixToFile (out, len))
-                    titleLabel.setText ("Exported audio: " + out.getFileName(), juce::dontSendNotification);
-                else
-                    titleLabel.setText ("Audio export failed.", juce::dontSendNotification);
+                if (! audioEngine.renderMixToFile (out, len))
+                { titleLabel.setText ("Audio export failed.", juce::dontSendNotification); return; }
+
+                juce::String msg = "Exported audio: " + out.getFileName();
+                if (normLufs < 0.0)
+                {
+                    juce::String rep;
+                    if (audioEngine.normalizeFileToLufs (out, (float) normLufs, -1.0f, rep))
+                        msg = "Exported (" + rep + "): " + out.getFileName();
+                    else
+                        msg = "Exported (normalize skipped: " + rep + "): " + out.getFileName();
+                }
+                titleLabel.setText (msg, juce::dontSendNotification);
+            });
+    }
+
+    void exportStems()
+    {
+        auto* ag = activeGroupPtr();
+        if (ag == nullptr) return;
+        const double len = videoDur() > 0.0 ? videoDur() : ag->duration;
+        if (len <= 0.0) { titleLabel.setText ("Nothing to export.", juce::dontSendNotification); return; }
+
+        const juce::String base = ag->file.getFileNameWithoutExtension();
+        chooser = std::make_unique<juce::FileChooser> ("Choose a folder for the stems", juce::File ("~/Desktop"));
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this, len, base] (const juce::FileChooser& fc)
+            {
+                restoreKeyFocus();
+                const auto dir = fc.getResult();
+                if (dir == juce::File()) return;
+                auto* g = activeGroupPtr();
+                if (g == nullptr) return;
+                dir.createDirectory();
+                pauseAll();
+
+                int ok = 0, idx = 0;
+                for (auto& tr : g->tracks)
+                {
+                    ++idx;
+                    if (tr->engineId < 0 || tr->clips.empty()) continue;   // skip empty/video-only lanes
+                    const juce::String nm = juce::File::createLegalFileName (
+                        base + " - " + juce::String (idx).paddedLeft ('0', 2) + " " + tr->name + ".wav");
+                    if (audioEngine.renderTrackStem (tr->engineId, dir.getChildFile (nm), len)) ++ok;
+                }
+                titleLabel.setText (ok > 0 ? ("Exported " + juce::String (ok) + " stems to " + dir.getFileName())
+                                           : "No stems exported (tracks empty).", juce::dontSendNotification);
             });
     }
 
     void showExportMenu()
     {
+        juce::PopupMenu normA, normV;
+        const std::pair<int, const char*> targets[] = {
+            { 0, "-14 LUFS  (streaming: Spotify / YouTube)" }, { 1, "-16 LUFS  (Apple Podcasts)" },
+            { 2, "-23 LUFS  (EBU R128 broadcast)" },           { 3, "-24 LUFS  (ATSC A/85 broadcast)" } };
+        for (auto& t : targets) { normA.addItem (10 + t.first, t.second); normV.addItem (20 + t.first, t.second); }
+
         juce::PopupMenu m;
         m.addItem (1, "Export video + audio (.mov)");
         m.addItem (2, "Export audio only (.wav)");
+        m.addSubMenu ("Export audio, loudness-normalized", normA);
+        m.addSubMenu ("Export video, loudness-normalized", normV);
+        m.addSeparator();
+        m.addItem (3, "Export stems (one WAV per track)...");
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton),
-            [this] (int r) { if (r == 1) exportVideo(); else if (r == 2) exportAudio(); restoreKeyFocus(); });
+            [this] (int r)
+            {
+                static const double tg[] = { -14.0, -16.0, -23.0, -24.0 };
+                if      (r == 1) exportVideo();
+                else if (r == 2) exportAudio();
+                else if (r == 3) exportStems();
+                else if (r >= 10 && r <= 13) exportAudio (tg[r - 10]);
+                else if (r >= 20 && r <= 23) exportVideo (tg[r - 20]);
+                restoreKeyFocus();
+            });
     }
 
     void setLoopRegion (double s, double e)

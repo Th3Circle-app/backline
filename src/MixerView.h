@@ -33,6 +33,7 @@ struct ChannelStrip : public juce::Component
     std::function<void()>       onFxClick, onSelectClick;
     std::function<void (bool)>  onRecordArmToggle;   // track R cell
     std::function<void()>       onBounceClick;       // master Bnc cell
+    std::function<void()>       onLoudnessReset;     // master loudness readout: click to restart integration
     std::function<void (float)> onSendChange;        // FX-bus send level
     std::function<void (int)>   onGroupChange;       // mixer link group (cycles 0..4)
     std::function<void()>       onOutputClick;       // output-routing slot (choose Master / bus)
@@ -95,6 +96,9 @@ struct ChannelStrip : public juce::Component
     {
         if ((! isMaster || isBus) && insertArea.contains (e.getPosition())) { if (onFxClick) onFxClick(); return; }   // insert FX (tracks + buses)
         if (isMaster && ! isBus && riRow.contains (e.getPosition())) { if (onBounceClick) onBounceClick(); return; }   // Bnc -> bounce
+        if (isMaster && ! outputRow.isEmpty()
+            && juce::Rectangle<int> (outputRow.getX(), outputRow.getY(), outputRow.getWidth(), autoRow.getBottom() - outputRow.getY()).contains (e.getPosition()))
+        { if (onLoudnessReset) onLoudnessReset(); return; }   // click loudness readout -> reset integration
         if (! isMaster && sendsRow.contains (e.getPosition())) { setSendFromX (e.x); return; }              // FX-bus send
         if (! isMaster && groupRow.contains (e.getPosition())) { groupId = (groupId + 1) % 5; if (onGroupChange) onGroupChange (groupId); repaint(); return; }   // cycle link group
         if (! isMaster && ! isBus && outputRow.contains (e.getPosition())) { if (onOutputClick) onOutputClick(); return; }   // choose output bus
@@ -111,6 +115,12 @@ struct ChannelStrip : public juce::Component
     }
 
     juce::Rectangle<int> meterBounds, tickArea, insertArea, valueBox, inRow, sendsRow, outputRow, groupRow, autoRow, riRow, peakLabel;
+
+    float lufsI = -100.0f, lufsS = -100.0f, tpDb = -200.0f;   // master loudness readout (LUFS / dBTP)
+    void setLoudness (float i, float s, float tp)
+    {
+        if (i != lufsI || s != lufsS || tp != tpDb) { lufsI = i; lufsS = s; tpDb = tp; repaint(); }
+    }
 
     void resized() override
     {
@@ -283,6 +293,28 @@ struct ChannelStrip : public juce::Component
                 g.setColour (skin.control.brighter (0.04f)); g.fillRoundedRectangle (bb, 3.0f);
                 g.setColour (skin.windowBg.darker (0.2f));   g.drawRoundedRectangle (bb, 3.0f, 1.0f);
                 g.setColour (skin.text); g.setFont (9.5f); g.drawText ("Bnc", riRow, juce::Justification::centred, false);
+
+                // Loudness readout (LUFS integrated/short-term + true peak) in the unused master rows
+                if (! outputRow.isEmpty())
+                {
+                    juce::Rectangle<int> lb (outputRow.getX(), outputRow.getY(),
+                                             outputRow.getWidth(), autoRow.getBottom() - outputRow.getY());
+                    auto lbf = lb.toFloat().reduced (1.0f);
+                    g.setColour (skin.timecodeBg); g.fillRoundedRectangle (lbf, 3.0f);
+                    g.setColour (skin.windowBg.darker (0.3f)); g.drawRoundedRectangle (lbf, 3.0f, 1.0f);
+                    auto cell = lb.reduced (4, 3);
+                    auto line = [&] (const char* tag, float v, const char* unit, juce::Colour col)
+                    {
+                        auto row = cell.removeFromTop (cell.getHeight() / juce::jmax (1, 3));
+                        g.setColour (skin.muted); g.setFont (8.0f);
+                        g.drawText (tag, row.removeFromLeft (16), juce::Justification::centredLeft, false);
+                        g.setColour (col); g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.5f, juce::Font::bold)));
+                        g.drawText (v <= -100.0f ? juce::String ("--") : juce::String (v, 1) + unit, row, juce::Justification::centredRight, false);
+                    };
+                    line ("I",  lufsI, "",    skin.timecodeText);                                  // integrated LUFS
+                    line ("S",  lufsS, "",    skin.timecodeText.withAlpha (0.85f));                // short-term LUFS
+                    line ("TP", tpDb,  "",    tpDb > -1.0f ? juce::Colour (0xffe2342a) : skin.timecodeText.withAlpha (0.85f));  // true peak dBTP (red over -1)
+                }
             }
             else
             {
@@ -399,6 +431,7 @@ public:
                            : s->isMaster ? engine->getMasterPeak()
                                          : (s->engineId >= 0 ? engine->getTrackPeak (s->engineId) : 0.0f);
             if (pk >= 0.0f) s->setMeter (pk);   // -1 => the audio lock was busy this tick; hold last
+            if (s->isMaster) s->setLoudness (engine->getIntegratedLufs(), engine->getShortTermLufs(), engine->getTruePeakDb());
         }
     }
 
@@ -463,6 +496,7 @@ private:
         s->onSelectClick= [this, g2, t2] { if (onSelect) onSelect (g2, t2); };
         s->onRecordArmToggle = [this, g2, t2] (bool b) { if (onRecordArm) onRecordArm (g2, t2, b); };
         s->onBounceClick     = [this] { if (onBounce) onBounce(); };
+        s->onLoudnessReset   = [this] { if (engine != nullptr) engine->resetLoudness(); };
         s->onSendChange      = [this, g2, t2] (float v) { if (onSend) onSend (g2, t2, v); };
         s->onGroupChange     = [this, g2, t2] (int gid) { if (onGroupChange) onGroupChange (g2, t2, gid); };
         s->onOutputClick     = [this, g2, t2] { if (onOutputMenu) onOutputMenu (g2, t2); };

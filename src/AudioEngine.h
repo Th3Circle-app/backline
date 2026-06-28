@@ -6,6 +6,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Clip.h"
+#include "LoudnessMeter.h"
 
 //==============================================================================
 /** In-memory multitrack mixer + master transport.
@@ -50,6 +51,22 @@ public:
     void  setExternalPeak (float v);                // fold in non-engine audio (e.g. the video) for the full-mix meter
     float getTrackPeak  (int trackId);              // last block's post-fader peak (0..1+), for meters
     float getMasterPeak() const;
+
+    //== Loudness (ITU-R BS.1770 / EBU R128) on the master, for delivery metering ==
+    float getMomentaryLufs()  const;   // 400 ms
+    float getShortTermLufs()  const;   // 3 s
+    float getIntegratedLufs() const;   // gated, since last reset
+    float getTruePeakDb()     const;   // 4x-oversampled dBTP
+    void  resetLoudness();             // restart integration (call before measuring a program)
+
+    /** Measure a rendered WAV's integrated loudness + true peak (offline, for normalized export). */
+    static bool measureFileLoudness (juce::AudioFormatManager& fm, const juce::File& wav,
+                                     float& integratedLufs, float& truePeakDb);
+    /** Apply a fixed dB gain to a WAV in place (for loudness-normalized export). */
+    static bool applyGainToWav (juce::AudioFormatManager& fm, const juce::File& wav, float gainDb);
+    /** Normalize a rendered WAV to a target integrated LUFS, never exceeding a true-peak ceiling.
+        Fills `report` (e.g. "-14.0 LUFS, peak -1.2 dBTP"). Returns false if the file is silent/unreadable. */
+    bool normalizeFileToLufs (const juce::File& wav, float targetLufs, float ceilingTpDb, juce::String& report);
 
     //== Per-track effect chain (native built-ins + hosted AU/VST3 plugins) ==
     juce::AudioPluginFormatManager& getPluginFormats() { return pluginFormats; }
@@ -116,6 +133,8 @@ public:
 
     /** Offline-renders the current mix (active group's clips + mute/solo gains) to a stereo WAV. */
     bool renderMixToFile (const juce::File& outWav, double lengthSeconds);
+    /** Offline-renders a single track in isolation (its FX + bus + master still apply) to a stereo WAV stem. */
+    bool renderTrackStem (int trackId, const juce::File& outWav, double lengthSeconds);
     /** Peak magnitude (0..1) of a clip's source region, for Normalize. */
     float clipPeak (int trackId, double sourceIn, double duration);
     double sampleRate() const;   // current device sample rate (for length<->samples math)
@@ -181,10 +200,12 @@ private:
         };
         std::vector<std::unique_ptr<Bus>> buses;
         std::atomic<int> preparedBlock { 512 };   // grow-only; never hand a plugin a larger block than prepared
+        std::atomic<int> soloRenderId { -1 };      // >=0 during stem render: only this track contributes
         std::atomic<float> masterGain { 1.0f };
         std::atomic<float> masterPeak { 0.0f };
         std::atomic<bool>  masterMute { false };
         std::atomic<float> externalPeak { 0.0f };   // video (non-engine) audio peak, folded into the full-mix meter
+        LoudnessMeter      loudness;                 // BS.1770/R128 loudness on the final master mix
     };
 
     static juce::AudioBuffer<float> resampleBuffer (const juce::AudioBuffer<float>& in, double inRate, double outRate);

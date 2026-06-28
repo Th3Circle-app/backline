@@ -55,6 +55,8 @@ void AudioEngine::Mixer::prepareToPlay (int samplesPerBlock, double sr)
 
     // Device (re)start pauses the audio callback, so preparing under the lock here cannot
     // contend with a live getNextAudioBlock; the lock just guards the chain vector traversal.
+    loudness.prepare (sr, 2);
+
     const juce::ScopedLock sl (lock);
     for (auto& t : tracks)
         for (auto& p : t->chain)
@@ -92,9 +94,11 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
     if (auxActive) aux.clear (0, n);   // FX/aux bus accumulator for this block
     for (auto& bp : buses) if (bp->buf.getNumSamples() >= n) bp->buf.clear (0, n);   // output-bus accumulators
 
+    const int soloRender = soloRenderId.load();
     for (auto& tptr : tracks)
     {
         auto* t = tptr.get();
+        if (soloRender >= 0 && t->id != soloRender) continue;   // stem render: isolate one track (FX+bus+master still apply)
         float g = t->gain.load();
         if (t->autoOn.load() && ! t->autoEnv.empty())               // read the volume envelope at this block's start
             g = envelopeAt (t->autoEnv, (double) blockStart / rt);
@@ -254,6 +258,8 @@ void AudioEngine::Mixer::getNextAudioBlock (const juce::AudioSourceChannelInfo& 
         for (int i = 0; i < n; ++i) mpk = juce::jmax (mpk, std::abs (d[i]));
     }
     masterPeak.store (mpk, std::memory_order_relaxed);
+
+    loudness.processBlock (*info.buffer, info.startSample, n);   // BS.1770/R128 on the final master mix
 
     pos.store (blockStart + n, std::memory_order_relaxed);
 }
@@ -558,6 +564,76 @@ bool  AudioEngine::getMasterMute() const      { return mixer.masterMute.load(); 
 void  AudioEngine::setExternalPeak (float v)  { mixer.externalPeak.store (juce::jmax (0.0f, v)); }
 float AudioEngine::getMasterPeak() const      { return juce::jmax (mixer.masterPeak.load(), mixer.externalPeak.load()); }
 
+float AudioEngine::getMomentaryLufs()  const  { return mixer.loudness.getMomentaryLufs(); }
+float AudioEngine::getShortTermLufs()  const  { return mixer.loudness.getShortTermLufs(); }
+float AudioEngine::getIntegratedLufs() const  { return mixer.loudness.getIntegratedLufs(); }
+float AudioEngine::getTruePeakDb()     const  { return mixer.loudness.getTruePeakDb(); }
+void  AudioEngine::resetLoudness()            { mixer.loudness.reset(); }
+
+bool AudioEngine::measureFileLoudness (juce::AudioFormatManager& fm, const juce::File& wav,
+                                       float& integratedLufs, float& truePeakDb)
+{
+    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wav));
+    if (reader == nullptr) return false;
+    LoudnessMeter meter;
+    meter.prepare (reader->sampleRate, 2);
+    const int block = 8192;
+    juce::AudioBuffer<float> buf (2, block);
+    juce::int64 left = (juce::int64) reader->lengthInSamples, posn = 0;
+    while (left > 0)
+    {
+        const int n = (int) juce::jmin ((juce::int64) block, left);
+        buf.clear();
+        reader->read (&buf, 0, n, posn, true, reader->numChannels > 1);
+        if (reader->numChannels == 1) buf.copyFrom (1, 0, buf, 0, 0, n);   // mono -> dual mono
+        meter.processBlock (buf, 0, n);
+        posn += n; left -= n;
+    }
+    integratedLufs = meter.getIntegratedLufs();
+    truePeakDb     = meter.getTruePeakDb();
+    return true;
+}
+
+bool AudioEngine::applyGainToWav (juce::AudioFormatManager& fm, const juce::File& wav, float gainDb)
+{
+    if (std::abs (gainDb) < 0.01f) return true;
+    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wav));
+    if (reader == nullptr) return false;
+    const double sr = reader->sampleRate;
+    const int ch = (int) juce::jmin ((unsigned) 2, reader->numChannels);
+    const int bits = (int) juce::jmax ((unsigned) 16, reader->bitsPerSample);
+    juce::AudioBuffer<float> all ((int) juce::jmax (1u, reader->numChannels), (int) reader->lengthInSamples);
+    reader->read (&all, 0, (int) reader->lengthInSamples, 0, true, true);
+    reader.reset();
+    all.applyGain (juce::Decibels::decibelsToGain (gainDb));
+
+    juce::File tmp = wav.getSiblingFile (wav.getFileNameWithoutExtension() + "_norm.wav");
+    if (auto* fmt = fm.findFormatForFileExtension ("wav"))
+    {
+        std::unique_ptr<juce::FileOutputStream> os (tmp.createOutputStream());
+        if (os == nullptr) return false;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            fmt->createWriterFor (os.get(), sr, (unsigned) ch, bits, {}, 0));
+        if (writer == nullptr) return false;
+        os.release();
+        writer->writeFromAudioSampleBuffer (all, 0, all.getNumSamples());
+        writer.reset();
+    }
+    return tmp.existsAsFile() && tmp.moveFileTo (wav);
+}
+
+bool AudioEngine::normalizeFileToLufs (const juce::File& wav, float targetLufs, float ceilingTpDb, juce::String& report)
+{
+    float integ = LoudnessMeter::kSilence, tp = -200.0f;
+    if (! measureFileLoudness (formatManager, wav, integ, tp)) return false;
+    if (integ <= LoudnessMeter::kSilence) { report = "silent (no gain applied)"; return false; }
+    float gain = targetLufs - integ;
+    if (tp + gain > ceilingTpDb) gain = ceilingTpDb - tp;   // never push true peak past the ceiling
+    if (! applyGainToWav (formatManager, wav, gain)) return false;
+    report = juce::String (integ + gain, 1) + " LUFS, peak " + juce::String (tp + gain, 1) + " dBTP";
+    return true;
+}
+
 float AudioEngine::getTrackPeak (int trackId)
 {
     if (! mixer.lock.tryEnter()) return -1.0f;   // never block the message thread (meters) behind a slow plugin
@@ -668,6 +744,14 @@ bool AudioEngine::renderMixToFile (const juce::File& outWav, double lengthSecond
     writer.reset();
     mixer.setNextReadPosition (savedPos);
     return done >= total;
+}
+
+bool AudioEngine::renderTrackStem (int trackId, const juce::File& outWav, double lengthSeconds)
+{
+    mixer.soloRenderId.store (trackId);          // isolate this track for the render
+    const bool ok = renderMixToFile (outWav, lengthSeconds);
+    mixer.soloRenderId.store (-1);
+    return ok;
 }
 
 //==============================================================================
