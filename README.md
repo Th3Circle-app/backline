@@ -1,29 +1,118 @@
-# Layback Station (LS)
+# Backline (formerly Layback Station)
 
-A hybrid **video editor + DAW** for music-to-video sync. Drop in finished brand videos,
-audition and cut candidate songs against each one, lock the sync, and export — multiple
-videos and many candidate tracks at once. (Logic caps at one video per project; this does not.)
+A native **music-to-picture editor**: a hybrid video editor and DAW built for the job of
+fitting music to locked picture. Drop in a finished video, audition and cut candidate
+tracks against it, mix, and export the mix back against picture.
 
-> "Layback" is the post-production term for laying final mixed audio back onto the master video.
+> "Layback" is the post-production term for laying final mixed audio back onto the master
+> video. The app now ships under the name **Backline**.
 
-**Status:** Phase 0 — foundation + video spike. Build started 2026-06-22. Not yet buildable end-to-end.
+**Native C++ / JUCE, macOS.** Packaged as a `.dmg` and in testers' hands.
+
+The wedge: Logic Pro allows one video per project. A music house evaluating library tracks
+against several brand videos has to open a separate session per video. Backline holds
+multiple videos and many candidate tracks in one session.
+
+---
+
+## Why this project is here
+
+Most of my work is React and Python. This one runs against a real-time audio callback, and
+the constraints are completely different: no allocations on the audio thread, no locks
+between the UI thread and the render thread, no garbage collector to save you. Plugin
+delay compensation and broadcast loudness are not framework calls, they are arithmetic you
+have to get right.
+
+## What is implemented
+
+**Mixing and routing**
+- Bus routing from the channel-strip output slot, Logic-style, each bus with its own
+  fader, mute, and effects (branded "Submix")
+- **Plugin delay compensation** across tracks and buses
+- Channel-strip inspector for the selected track and master
+
+**Metering and export**
+- **BS.1770 / EBU R128 loudness**: LUFS and true-peak metering, loudness-normalized
+  export, and stems export
+- Cue ranges with an exportable cue list
+
+**Editing**
+- Pitch-shift clips by semitone (SoundTouch), baked and persisted into the project
+- Edit tools that change the cursor per mode: trim, grab, scrub, zoom
+- Multi-format counter: timecode, minutes:seconds, bars and beats, feet+frames (35mm), and
+  samples, with drag-on-LCD tempo and a session start-timecode offset
+
+**Video**
+- AVFoundation / VideoToolbox decode and playback (`src/VideoView.mm`)
+
+**Shell**
+- Three skins: Logic, Pro Tools, and Backline's own glassy indigo identity
+- Guided onboarding tour with a spotlight walkthrough
+- Packaged `.dmg` plus a tester install guide (`docs/TESTER_README.md`)
 
 ## Stack
-- **Native C++ / JUCE**, macOS-first.
-- **Audio engine:** [Tracktion Engine](https://github.com/Tracktion/tracktion_engine) (the open-source engine behind Tracktion Waveform).
-- **Video:** [foleys_video_engine](https://github.com/ffAudio/foleys_video_engine) (FFmpeg-backed) as a starting reference; AVFoundation / VideoToolbox → Metal for native decode and playback.
-- **Project format:** [OpenTimelineIO](https://opentimelineio.readthedocs.io/) (Apache-2.0).
 
-## Docs
-- [docs/VISION.md](docs/VISION.md) — what it is, who it's for, the wedge
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how it's built
-- [docs/ROADMAP.md](docs/ROADMAP.md) — phases + MVP scope
-- [docs/DECISIONS.md](docs/DECISIONS.md) — key technical/legal calls, with sources
+| Layer | Choice |
+|---|---|
+| App framework | JUCE (C++) |
+| Audio engine | [Tracktion Engine](https://github.com/Tracktion/tracktion_engine) |
+| Video decode | AVFoundation / VideoToolbox via an Objective-C++ bridge |
+| Time-stretch and pitch | SoundTouch |
+| Media tooling | FFmpeg |
+| Project format | [OpenTimelineIO](https://opentimelineio.readthedocs.io/) (Apache-2.0) |
 
-## Build (Phase 0, in progress)
-Requires: macOS, Xcode Command Line Tools, CMake, FFmpeg (`brew install ffmpeg`), JUCE.
-Dependencies live in `external/` (not committed). See ROADMAP for current step.
+Every library was picked so the app can ship commercially. `docs/DECISIONS.md` records
+those calls with sources.
+
+## Structure
+
+```
+src/
+  Main.cpp                  app entry
+  AudioEngine.{h,cpp}       transport, routing, buses, PDC
+  TimelineComponent.{h,cpp} timeline UI and editing
+  VideoView.{h,mm}          AVFoundation video playback
+  MixerView.h               mixer surface
+  LoudnessMeter.h           BS.1770 / R128 LUFS and true peak
+  NativeEffects.h           built-in processors
+  StemSplitter.h            stem export
+  Skin.h                    skin system
+  LogicControlBar.h         Logic-style transport
+  ProToolsControlBar.h      Pro Tools-style transport
+  BacklineControlBar.h      Backline transport and counter
+  LogicInspector.h          channel-strip inspector
+  TourOverlay.h             onboarding spotlight
+docs/
+  VISION.md                 what it is, who it is for, the wedge
+  ARCHITECTURE.md           how it is built
+  ROADMAP.md                phases and MVP scope
+  DECISIONS.md              technical and licensing calls, with sources
+  DAW_FEATURE_GAP.md        audit against Reaper, Ardour, Nuendo, Pro Tools
+  DISTRIBUTION.md           packaging and release
+  TESTER_README.md          install guide shipped inside the DMG
+```
+
+## Build
+
+Requires macOS, Xcode Command Line Tools, CMake, and FFmpeg (`brew install ffmpeg`).
+Third-party dependencies live in `external/` and are not committed.
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./package.sh          # produces Backline.dmg
+```
+
+## Status
+
+In active development, and further along than a phase label would suggest: it builds, it
+packages, and testers are running it. Not Apple-notarized yet, so first launch uses the
+right-click Open path documented in the tester guide. The current build is Intel and runs
+on Apple Silicon under Rosetta; a native ARM build is on the list.
 
 ## Team
-- **Harrison** — video side, product
+
+- **Harrison** — video side, product, and the app itself
 - **DB**, **Scott** — audio/DAW collaborators
+
+Repo maintained by [Harrison C. Songolo](https://xkaii.studio).
