@@ -21,3 +21,7 @@ DerivedData/
 
 # Media test assets (large)
 /assets/test-media/
+
+# packaged build output
+Backline.dmg
+build-release/
