@@ -1,0 +1,31 @@
+name: build
+on: [push, pull_request]
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE and SoundTouch are cloned rather than vendored, so the repo stays
+      # small. Both are pinned to the revisions this app is developed against.
+      - name: Fetch JUCE 8.0.14
+        run: git clone --depth 1 --branch 8.0.14 https://github.com/juce-framework/JUCE.git external/JUCE
+
+      - name: Fetch SoundTouch
+        run: |
+          git clone https://codeberg.org/soundtouch/soundtouch.git external/soundtouch
+          git -C external/soundtouch checkout f738b11
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+
+      - name: Build
+        run: cmake --build build --config Release -j3
+
+      - name: Verify the app bundle was produced
+        run: |
+          APP=$(find build -name "Backline.app" -maxdepth 6 | head -1)
+          test -n "$APP" || { echo "No app bundle produced"; exit 1; }
+          test -x "$APP/Contents/MacOS/Backline" || { echo "No executable in bundle"; exit 1; }
+          echo "Built $APP"
