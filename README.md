@@ -13,6 +13,13 @@ The wedge: Logic Pro allows one video per project. A music house evaluating libr
 against several brand videos has to open a separate session per video. Backline holds
 multiple videos and many candidate tracks in one session.
 
+![Backline mid-playback: two videos and three audio tracks running against one
+transport](docs/img/editor.png)
+
+*Mid-playback, bar 5|1 at timecode 00:00:08:0. Two videos — a brand spot and a montage —
+sit in the same session with three candidate tracks, all scrubbing against one transport.
+That is the thing Logic will not do.*
+
 ---
 
 ## Why this project is here
@@ -35,6 +42,18 @@ have to get right.
 - **BS.1770 / EBU R128 loudness**: LUFS and true-peak metering, loudness-normalized
   export, and stems export
 - Cue ranges with an exportable cue list
+
+<img src="docs/img/master-bus.png" alt="Master bus inspector with EQ, mastering chain, and
+integrated, short-term and true-peak loudness readouts" width="260" align="right">
+
+Track and master strips during playback: the selected track peaking at **-1.5 dB** into a
+master sitting at **-11.3 dB** with a **-5.9 dB** peak. Above the master fader are the
+three readouts broadcast delivery is graded on — **I** (integrated), **S** (short-term),
+**TP** (true peak). Delivery specs are written in LUFS, so on this bus the meter is the
+feature and the fader is the afterthought.
+
+<br clear="right">
+
 
 **Editing**
 - Pitch-shift clips by semitone (SoundTouch), baked and persisted into the project
